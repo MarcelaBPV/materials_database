@@ -8,8 +8,16 @@ from sklearn.linear_model import LinearRegression
 import numpy as np
 
 # --------------------- Conexão segura com Supabase ---------------------
-SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+import streamlit as st
+from supabase import create_client
+
+supabase_url = st.secrets["SUPABASE_URL"]
+supabase_key = st.secrets["SUPABASE_KEY"]
+
+supabase = create_client(supabase_url, supabase_key)
+
+samples = supabase.table("samples").select("*").execute().data
+st.write(samples)
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
