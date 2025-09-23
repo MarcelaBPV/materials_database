@@ -1,29 +1,42 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
+import numpy as np
 from supabase import create_client, Client
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 from sklearn.linear_model import LinearRegression
-import numpy as np
 
-# --------------------- Conexão segura com Supabase ---------------------
-import streamlit as st
-from supabase import create_client
-
-supabase_url = st.secrets["SUPABASE_URL"]
-supabase_key = st.secrets["SUPABASE_KEY"]
-
-supabase = create_client(supabase_url, supabase_key)
-
-samples = supabase.table("samples").select("*").execute().data
-st.write(samples)
-
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-# --------------------- Layout ---------------------
+# --------------------- Configuração da página ---------------------
 st.set_page_config(page_title="📊 Materials Database", layout="wide")
 st.title("Materials Database")
+
+# --------------------- Conexão Supabase ---------------------
+supabase_url = st.secrets["SUPABASE_URL"]
+supabase_key = st.secrets["SUPABASE_KEY"]
+supabase: Client = create_client(supabase_url, supabase_key)
+
+# --------------------- Carregamento de dados ---------------------
+@st.cache_data(ttl=300)
+def load_samples():
+    try:
+        data = supabase.table("samples").select("*").execute().data
+        return pd.DataFrame(data) if data else pd.DataFrame()
+    except Exception as e:
+        st.error(f"Erro ao carregar amostras: {e}")
+        return pd.DataFrame()
+
+@st.cache_data(ttl=300)
+def load_results():
+    try:
+        data = supabase.table("resultadoscaracterizacao").select("*").execute().data
+        return pd.DataFrame(data) if data else pd.DataFrame()
+    except Exception as e:
+        st.error(f"Erro ao carregar resultados: {e}")
+        return pd.DataFrame()
+
+df_samples = load_samples()
+df_results = load_results()
 
 # --------------------- Abas ---------------------
 abas = st.tabs(["1 Amostras", "2 Ensaios", "3 Resultados", "4 Otimização"])
@@ -31,34 +44,26 @@ abas = st.tabs(["1 Amostras", "2 Ensaios", "3 Resultados", "4 Otimização"])
 # --------------------- Aba 1: Amostras ---------------------
 with abas[0]:
     st.header("1 Gerenciamento de Amostras")
-
-    try:
-        samples = supabase.table("samples").select("*").execute().data
-        if samples:
-            df_samples = pd.DataFrame(samples)
-            st.dataframe(df_samples)
-        else:
-            st.info("Nenhuma amostra cadastrada ainda.")
-    except Exception as e:
-        st.error(f"Erro ao carregar amostras: {e}")
+    if df_samples.empty:
+        st.info("Nenhuma amostra cadastrada ainda.")
+    else:
+        st.dataframe(df_samples)
 
 # --------------------- Aba 2: Ensaios ---------------------
 with abas[1]:
     st.header("2 Ensaios por Amostra")
-
-    # Seleciona amostra
-    samples = supabase.table("samples").select("*").execute().data
-    if samples:
-        df_samples = pd.DataFrame(samples)
+    if df_samples.empty:
+        st.warning("Cadastre amostras primeiro.")
+    else:
         sample_choice = st.selectbox("Escolha a amostra", df_samples["id"])
-        
-        # Seleciona tipo de experimento
         tipo = st.radio("Tipo de experimento", ["Raman", "4 Pontas", "Tensiometria"])
 
         if tipo == "Raman":
             data = supabase.table("raman_spectra").select("*").eq("sample_id", sample_choice).execute().data
-            if data:
-                df = pd.DataFrame(data)
+            df = pd.DataFrame(data) if data else pd.DataFrame()
+            if df.empty:
+                st.warning("Nenhum dado Raman encontrado.")
+            elif all(col in df.columns for col in ["shift", "intensity"]):
                 st.write(df.head())
                 fig, ax = plt.subplots()
                 ax.plot(df["shift"], df["intensity"])
@@ -67,12 +72,14 @@ with abas[1]:
                 ax.set_title("Raman Spectrum")
                 st.pyplot(fig)
             else:
-                st.warning("Nenhum dado Raman encontrado.")
+                st.warning("Colunas esperadas não encontradas.")
 
         elif tipo == "4 Pontas":
             data = supabase.table("four_point_probe_points").select("*").eq("sample_id", sample_choice).execute().data
-            if data:
-                df = pd.DataFrame(data)
+            df = pd.DataFrame(data) if data else pd.DataFrame()
+            if df.empty:
+                st.warning("Nenhum dado 4 Pontas encontrado.")
+            elif all(col in df.columns for col in ["corrente", "tensao"]):
                 st.write(df.head())
                 fig, ax = plt.subplots()
                 ax.plot(df["corrente"], df["tensao"], 'o-')
@@ -81,12 +88,14 @@ with abas[1]:
                 ax.set_title("Curva 4 Pontas")
                 st.pyplot(fig)
             else:
-                st.warning("Nenhum dado 4 Pontas encontrado.")
+                st.warning("Colunas esperadas não encontradas.")
 
         elif tipo == "Tensiometria":
             data = supabase.table("tensiometry_points").select("*").eq("sample_id", sample_choice).execute().data
-            if data:
-                df = pd.DataFrame(data)
+            df = pd.DataFrame(data) if data else pd.DataFrame()
+            if df.empty:
+                st.warning("Nenhum dado de Tensiometria encontrado.")
+            elif all(col in df.columns for col in ["tempo", "forca"]):
                 st.write(df.head())
                 fig, ax = plt.subplots()
                 ax.plot(df["tempo"], df["forca"])
@@ -95,62 +104,49 @@ with abas[1]:
                 ax.set_title("Curva de Tensiometria")
                 st.pyplot(fig)
             else:
-                st.warning("Nenhum dado de Tensiometria encontrado.")
-    else:
-        st.warning("Cadastre amostras primeiro.")
+                st.warning("Colunas esperadas não encontradas.")
 
 # --------------------- Aba 3: Resultados ---------------------
 with abas[2]:
     st.header("3 Resultados de Caracterização")
-    try:
-        resultados = supabase.table("resultadoscaracterizacao").select("*").execute().data
-        if resultados:
-            df_res = pd.DataFrame(resultados)
-            st.dataframe(df_res)
-        else:
-            st.info("Nenhum resultado disponível.")
-    except Exception as e:
-        st.error(f"Erro ao carregar resultados: {e}")
+    if df_results.empty:
+        st.info("Nenhum resultado disponível.")
+    else:
+        st.dataframe(df_results)
 
 # --------------------- Aba 4: Otimização ---------------------
 with abas[3]:
     st.header("4 Otimização de Dados (Machine Learning)")
+    if df_results.empty:
+        st.info("Nenhum dado disponível para otimização.")
+    else:
+        df_ml = df_results.select_dtypes(include=[np.number]).dropna()
+        st.write("Dados carregados para ML:", df_ml.head())
 
-    try:
-        data = supabase.table("resultadoscaracterizacao").select("*").execute().data
-        if data:
-            df = pd.DataFrame(data).dropna()
-            st.write("Dados carregados:", df.head())
+        if len(df_ml) > 2 and df_ml.shape[1] > 1:
+            # PCA
+            st.subheader("Redução de Dimensionalidade (PCA)")
+            pca = PCA(n_components=2)
+            X_pca = pca.fit_transform(df_ml)
+            fig, ax = plt.subplots()
+            ax.scatter(X_pca[:, 0], X_pca[:, 1])
+            ax.set_xlabel("PC1")
+            ax.set_ylabel("PC2")
+            st.pyplot(fig)
 
-            if len(df) > 2:
-                # PCA
-                st.subheader("Redução de Dimensionalidade (PCA)")
-                X = df.select_dtypes(include=[np.number])
-                pca = PCA(n_components=2)
-                X_pca = pca.fit_transform(X)
-                fig, ax = plt.subplots()
-                ax.scatter(X_pca[:, 0], X_pca[:, 1])
-                ax.set_xlabel("PC1")
-                ax.set_ylabel("PC2")
-                st.pyplot(fig)
+            # Clustering
+            st.subheader("Agrupamento (KMeans)")
+            kmeans = KMeans(n_clusters=2, n_init=10).fit(df_ml)
+            df_results["cluster"] = kmeans.labels_
+            st.dataframe(df_results)
 
-                # Clustering
-                st.subheader("Agrupamento (KMeans)")
-                kmeans = KMeans(n_clusters=2, n_init=10).fit(X)
-                df["cluster"] = kmeans.labels_
-                st.dataframe(df)
-
-                # Regressão Linear (exemplo simples)
-                if X.shape[1] >= 2:
-                    st.subheader("Regressão Linear")
-                    X_lin = X.iloc[:, :-1]
-                    y_lin = X.iloc[:, -1]
-                    model = LinearRegression().fit(X_lin, y_lin)
-                    st.write("Coeficientes:", model.coef_)
-                    st.write("Intercepto:", model.intercept_)
-            else:
-                st.warning("Poucos dados para aplicar ML.")
+            # Regressão Linear (exemplo simples)
+            if df_ml.shape[1] >= 2:
+                st.subheader("Regressão Linear")
+                X_lin = df_ml.iloc[:, :-1]
+                y_lin = df_ml.iloc[:, -1]
+                model = LinearRegression().fit(X_lin, y_lin)
+                st.write("Coeficientes:", model.coef_)
+                st.write("Intercepto:", model.intercept_)
         else:
-            st.info("Nenhum dado disponível para otimização.")
-    except Exception as e:
-        st.error(f"Erro no módulo de otimização: {e}")
+            st.warning("Poucos dados para aplicar Machine Learning.")
