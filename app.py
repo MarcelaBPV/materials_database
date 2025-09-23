@@ -15,14 +15,14 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --------------------- Layout ---------------------
 st.set_page_config(page_title="📊 Materials Database", layout="wide")
-st.title("📊 Materials Database")
+st.title("Materials Database")
 
 # --------------------- Abas ---------------------
-abas = st.tabs(["🧪 Amostras", "🔬 Ensaios", "📈 Resultados", "🤖 Otimização"])
+abas = st.tabs(["1 Amostras", "2 Ensaios", "3 Resultados", "4 Otimização"])
 
 # --------------------- Aba 1: Amostras ---------------------
 with abas[0]:
-    st.header("🧪 Gerenciamento de Amostras")
+    st.header("1 Gerenciamento de Amostras")
 
     try:
         samples = supabase.table("samples").select("*").execute().data
@@ -36,7 +36,7 @@ with abas[0]:
 
 # --------------------- Aba 2: Ensaios ---------------------
 with abas[1]:
-    st.header("🔬 Ensaios por Amostra")
+    st.header("2 Ensaios por Amostra")
 
     # Seleciona amostra
     samples = supabase.table("samples").select("*").execute().data
@@ -93,7 +93,7 @@ with abas[1]:
 
 # --------------------- Aba 3: Resultados ---------------------
 with abas[2]:
-    st.header("📈 Resultados de Caracterização")
+    st.header("3 Resultados de Caracterização")
     try:
         resultados = supabase.table("resultadoscaracterizacao").select("*").execute().data
         if resultados:
@@ -106,7 +106,7 @@ with abas[2]:
 
 # --------------------- Aba 4: Otimização ---------------------
 with abas[3]:
-    st.header("🤖 Otimização de Dados (Machine Learning)")
+    st.header("4 Otimização de Dados (Machine Learning)")
 
     try:
         data = supabase.table("resultadoscaracterizacao").select("*").execute().data
