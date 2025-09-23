@@ -62,49 +62,49 @@ with abas[1]:
             data = supabase.table("raman_spectra").select("*").eq("sample_id", sample_choice).execute().data
             df = pd.DataFrame(data) if data else pd.DataFrame()
             if df.empty:
-                st.warning("Nenhum dado Raman encontrado.")
-            elif all(col in df.columns for col in ["shift", "intensity"]):
+                st.warning("Nenhum dado Raman encontrado para esta amostra.")
+            elif all(col in df.columns for col in ["wavenumber_cm1", "intensity_a"]):
                 st.write(df.head())
                 fig, ax = plt.subplots()
-                ax.plot(df["shift"], df["intensity"])
+                ax.plot(df["wavenumber_cm1"], df["intensity_a"])
                 ax.set_xlabel("Raman Shift (cm⁻¹)")
                 ax.set_ylabel("Intensity (a.u.)")
-                ax.set_title("Raman Spectrum")
+                ax.set_title(f"Raman Spectrum - Amostra {sample_choice}")
                 st.pyplot(fig)
             else:
-                st.warning("Colunas esperadas não encontradas.")
+                st.warning("Colunas esperadas (wavenumber_cm1, intensity_a) não encontradas.")
 
         elif tipo == "4 Pontas":
             data = supabase.table("four_point_probe_points").select("*").eq("sample_id", sample_choice).execute().data
             df = pd.DataFrame(data) if data else pd.DataFrame()
             if df.empty:
-                st.warning("Nenhum dado 4 Pontas encontrado.")
-            elif all(col in df.columns for col in ["corrente", "tensao"]):
+                st.warning("Nenhum dado de 4 Pontas encontrado para esta amostra.")
+            elif all(col in df.columns for col in ["current", "voltage"]):
                 st.write(df.head())
                 fig, ax = plt.subplots()
-                ax.plot(df["corrente"], df["tensao"], 'o-')
+                ax.plot(df["current"], df["voltage"], 'o-')
                 ax.set_xlabel("Corrente (A)")
                 ax.set_ylabel("Tensão (V)")
-                ax.set_title("Curva 4 Pontas")
+                ax.set_title(f"Curva 4 Pontas - Amostra {sample_choice}")
                 st.pyplot(fig)
             else:
-                st.warning("Colunas esperadas não encontradas.")
+                st.warning("Colunas esperadas (current, voltage) não encontradas.")
 
         elif tipo == "Tensiometria":
             data = supabase.table("tensiometry_points").select("*").eq("sample_id", sample_choice).execute().data
             df = pd.DataFrame(data) if data else pd.DataFrame()
             if df.empty:
-                st.warning("Nenhum dado de Tensiometria encontrado.")
+                st.warning("Nenhum dado de Tensiometria encontrado para esta amostra.")
             elif all(col in df.columns for col in ["tempo", "forca"]):
                 st.write(df.head())
                 fig, ax = plt.subplots()
                 ax.plot(df["tempo"], df["forca"])
                 ax.set_xlabel("Tempo (s)")
                 ax.set_ylabel("Força (mN)")
-                ax.set_title("Curva de Tensiometria")
+                ax.set_title(f"Curva de Tensiometria - Amostra {sample_choice}")
                 st.pyplot(fig)
             else:
-                st.warning("Colunas esperadas não encontradas.")
+                st.warning("Colunas esperadas (tempo, forca) não encontradas.")
 
 # --------------------- Aba 3: Resultados ---------------------
 with abas[2]:
