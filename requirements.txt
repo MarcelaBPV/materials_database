@@ -1,2 +1,7 @@
 streamlit
+pandas
+matplotlib
+numpy
+scikit-learn
 supabase
+psycopg2-binary
