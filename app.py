@@ -1,7 +1,7 @@
 import streamlit as st
 from supabase import create_client, Client
 
-# --------------------- Conexão segura com Supabase ---------------------
+# --------------------- Conexão segura com Supabase --------------------
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 
@@ -12,7 +12,7 @@ st.set_page_config(page_title="📊 Materials Database", layout="wide")
 st.title("📊 Materials Database")
 st.write("Exemplo de conexão com banco de dados no Supabase.")
 
-# --------------------- Teste de conexão e exibição de dados ---------------------
+# --------------------- Teste de conexão e exibição de dados --------------------
 try:
     response = supabase.table("samples").select("*").execute()
     if response.data:
