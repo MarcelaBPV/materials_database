@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from supabase import create_client, Client
 from sklearn.decomposition import PCA
-from sklearn.cluster import KMeans
 from sklearn.linear_model import LinearRegression
 from scipy.signal import find_peaks
 
@@ -20,77 +19,90 @@ supabase: Client = create_client(supabase_url, supabase_key)
 # --------------------- Funções de otimização ---------------------
 def optimize_raman(df, sample_id):
     """Detecta picos e aplica PCA no espectro Raman"""
-    try:
-        # Detectar picos
-        peaks, _ = find_peaks(df["intensity_a"], height=0)
-        num_peaks = len(peaks)
+    peaks, _ = find_peaks(df["intensity_a"], height=0)
+    num_peaks = len(peaks)
 
-        # PCA
-        X = df[["wavenumber_cm1", "intensity_a"]].dropna()
-        pca = PCA(n_components=2)
-        X_pca = pca.fit_transform(X)
-        explained = pca.explained_variance_ratio_.sum()
+    X = df[["wavenumber_cm1", "intensity_a"]].dropna()
+    pca = PCA(n_components=2)
+    X_pca = pca.fit_transform(X)
+    explained = pca.explained_variance_ratio_.sum()
 
-        # Salvar resultado
-        result = {
-            "num_peaks": int(num_peaks),
-            "peak_positions": df["wavenumber_cm1"].iloc[peaks].tolist(),
-            "explained_variance": float(explained),
-        }
-        supabase.table("resultadosotimizacao").insert({
-            "sample_id": int(sample_id),
-            "tipo": "raman",
-            "metricas": result
-        }).execute()
+    result = {
+        "num_peaks": int(num_peaks),
+        "peak_positions": df["wavenumber_cm1"].iloc[peaks].tolist(),
+        "explained_variance": float(explained),
+    }
+    supabase.table("resultadosotimizacao").insert({
+        "sample_id": int(sample_id),
+        "tipo": "raman",
+        "metricas": result
+    }).execute()
 
-        return result
-    except Exception as e:
-        st.error(f"Erro na otimização Raman: {e}")
-        return {}
+    # ----------- Plot comparativo -----------
+    fig, ax = plt.subplots()
+    ax.plot(df["wavenumber_cm1"], df["intensity_a"], label="Espectro Raman")
+    ax.plot(df["wavenumber_cm1"].iloc[peaks], df["intensity_a"].iloc[peaks], "ro", label="Picos detectados")
+    ax.set_xlabel("Wavenumber (cm⁻¹)")
+    ax.set_ylabel("Intensidade (a.u.)")
+    ax.legend()
+    st.pyplot(fig)
+
+    return result
 
 def optimize_four_point(df, sample_id):
     """Ajusta regressão linear da curva I-V"""
-    try:
-        X = df[["current"]].values
-        y = df["voltage"].values
-        model = LinearRegression().fit(X, y)
-        resistencia = model.coef_[0]
+    X = df[["current"]].values
+    y = df["voltage"].values
+    model = LinearRegression().fit(X, y)
+    resistencia = model.coef_[0]
 
-        result = {
-            "resistencia_linear": float(resistencia),
-            "intercepto": float(model.intercept_)
-        }
-        supabase.table("resultadosotimizacao").insert({
-            "sample_id": int(sample_id),
-            "tipo": "four_pontas",
-            "metricas": result
-        }).execute()
+    result = {
+        "resistencia_linear": float(resistencia),
+        "intercepto": float(model.intercept_)
+    }
+    supabase.table("resultadosotimizacao").insert({
+        "sample_id": int(sample_id),
+        "tipo": "four_pontas",
+        "metricas": result
+    }).execute()
 
-        return result
-    except Exception as e:
-        st.error(f"Erro na otimização 4 Pontas: {e}")
-        return {}
+    # ----------- Plot comparativo -----------
+    fig, ax = plt.subplots()
+    ax.scatter(df["current"], df["voltage"], label="Dados experimentais")
+    ax.plot(df["current"], model.predict(X), "r-", label=f"Ajuste Linear (R={resistencia:.2f})")
+    ax.set_xlabel("Corrente (A)")
+    ax.set_ylabel("Tensão (V)")
+    ax.legend()
+    st.pyplot(fig)
+
+    return result
 
 def optimize_tensiometry(df, sample_id):
     """Calcula média e ajusta polinômio"""
-    try:
-        media_forca = df["forca"].mean()
-        coef = np.polyfit(df["tempo"], df["forca"], 3)
+    media_forca = df["forca"].mean()
+    coef = np.polyfit(df["tempo"], df["forca"], 3)
+    poly = np.poly1d(coef)
 
-        result = {
-            "media_forca": float(media_forca),
-            "coef_poly3": coef.tolist()
-        }
-        supabase.table("resultadosotimizacao").insert({
-            "sample_id": int(sample_id),
-            "tipo": "tensiometria",
-            "metricas": result
-        }).execute()
+    result = {
+        "media_forca": float(media_forca),
+        "coef_poly3": coef.tolist()
+    }
+    supabase.table("resultadosotimizacao").insert({
+        "sample_id": int(sample_id),
+        "tipo": "tensiometria",
+        "metricas": result
+    }).execute()
 
-        return result
-    except Exception as e:
-        st.error(f"Erro na otimização Tensiometria: {e}")
-        return {}
+    # ----------- Plot comparativo -----------
+    fig, ax = plt.subplots()
+    ax.plot(df["tempo"], df["forca"], "bo", label="Dados experimentais")
+    ax.plot(df["tempo"], poly(df["tempo"]), "r-", label="Ajuste Polinomial (grau 3)")
+    ax.set_xlabel("Tempo (s)")
+    ax.set_ylabel("Força (N)")
+    ax.legend()
+    st.pyplot(fig)
+
+    return result
 
 # --------------------- Carregamento de dados ---------------------
 @st.cache_data(ttl=300)
@@ -172,7 +184,7 @@ with abas[2]:
                 df = pd.DataFrame(data)
                 if not df.empty:
                     res = optimize_raman(df, sample_choice)
-                    st.success("Otimização Raman concluída e salva!")
+                    st.success("✅ Otimização Raman concluída e salva!")
                     st.json(res)
 
             elif tipo == "4 Pontas":
@@ -180,7 +192,7 @@ with abas[2]:
                 df = pd.DataFrame(data)
                 if not df.empty:
                     res = optimize_four_point(df, sample_choice)
-                    st.success("Otimização 4 Pontas concluída e salva!")
+                    st.success("✅ Otimização 4 Pontas concluída e salva!")
                     st.json(res)
 
             elif tipo == "Tensiometria":
@@ -188,5 +200,5 @@ with abas[2]:
                 df = pd.DataFrame(data)
                 if not df.empty:
                     res = optimize_tensiometry(df, sample_choice)
-                    st.success("Otimização Tensiometria concluída e salva!")
+                    st.success("✅ Otimização Tensiometria concluída e salva!")
                     st.json(res)
