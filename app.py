@@ -18,30 +18,29 @@ supabase: Client = create_client(supabase_url, supabase_key)
 
 # --------------------- Funções de otimização ---------------------
 def optimize_raman(df, sample_id):
-    """Detecta picos e aplica PCA no espectro Raman"""
-    peaks, _ = find_peaks(df["intensity"], height=0)
+    peaks, _ = find_peaks(df["intensity_a"], height=0)
     num_peaks = len(peaks)
-
-    X = df[["wavenumber", "intensity"]].dropna()
+    X = df[["wavenumber_cm1", "intensity_a"]].dropna()
     pca = PCA(n_components=2)
     X_pca = pca.fit_transform(X)
     explained = pca.explained_variance_ratio_.sum()
-
+    
     result = {
         "num_peaks": int(num_peaks),
-        "peak_positions": df["wavenumber"].iloc[peaks].tolist(),
-        "explained_variance": float(explained),
+        "peak_positions": df["wavenumber_cm1"].iloc[peaks].tolist(),
+        "explained_variance": float(explained)
     }
+
+    # Salvar otimização no Supabase
     supabase.table("resultadosotimizacao").insert({
-        "sample_id": int(sample_id),
-        "tipo": "raman",
-        "metricas": result
+        "id_ensaio": None,  # Se tiver id_ensaio, colocar aqui
+        "parametros_otimizados": result
     }).execute()
 
-    # ----------- Plot comparativo -----------
+    # Plot
     fig, ax = plt.subplots()
-    ax.plot(df["wavenumber"], df["intensity"], label="Espectro Raman")
-    ax.plot(df["wavenumber"].iloc[peaks], df["intensity"].iloc[peaks], "ro", label="Picos detectados")
+    ax.plot(df["wavenumber_cm1"], df["intensity_a"], label="Espectro Raman")
+    ax.plot(df["wavenumber_cm1"].iloc[peaks], df["intensity_a"].iloc[peaks], "ro", label="Picos detectados")
     ax.set_xlabel("Wavenumber (cm⁻¹)")
     ax.set_ylabel("Intensidade (a.u.)")
     ax.legend()
@@ -50,9 +49,8 @@ def optimize_raman(df, sample_id):
     return result
 
 def optimize_four_point(df, sample_id):
-    """Ajusta regressão linear da curva I-V"""
-    X = df[["I_mA"]].values
-    y = df["V_mV"].values
+    X = df[["current_a"]].values
+    y = df["voltage_v"].values
     model = LinearRegression().fit(X, y)
     resistencia = model.coef_[0]
 
@@ -61,26 +59,23 @@ def optimize_four_point(df, sample_id):
         "intercepto": float(model.intercept_)
     }
     supabase.table("resultadosotimizacao").insert({
-        "sample_id": int(sample_id),
-        "tipo": "four_pontas",
-        "metricas": result
+        "id_ensaio": None,
+        "parametros_otimizados": result
     }).execute()
 
-    # ----------- Plot comparativo -----------
     fig, ax = plt.subplots()
-    ax.scatter(df["I_mA"], df["V_mV"], label="Dados experimentais")
-    ax.plot(df["I_mA"], model.predict(X), "r-", label=f"Ajuste Linear (R={resistencia:.2f})")
-    ax.set_xlabel("Corrente (mA)")
-    ax.set_ylabel("Tensão (mV)")
+    ax.scatter(df["current_a"], df["voltage_v"], label="Dados experimentais")
+    ax.plot(df["current_a"], model.predict(X), "r-", label=f"Ajuste Linear (R={resistencia:.2f})")
+    ax.set_xlabel("Corrente (A)")
+    ax.set_ylabel("Tensão (V)")
     ax.legend()
     st.pyplot(fig)
 
     return result
 
 def optimize_tensiometry(df, sample_id):
-    """Calcula média e ajusta polinômio"""
-    media_forca = df["force_N"].mean()
-    coef = np.polyfit(df["time_s"], df["force_N"], 3)
+    media_forca = df["surface_tension_mn_m"].mean()
+    coef = np.polyfit(df["t_seconds"], df["surface_tension_mn_m"], 3)
     poly = np.poly1d(coef)
 
     result = {
@@ -88,15 +83,13 @@ def optimize_tensiometry(df, sample_id):
         "coef_poly3": coef.tolist()
     }
     supabase.table("resultadosotimizacao").insert({
-        "sample_id": int(sample_id),
-        "tipo": "tensiometria",
-        "metricas": result
+        "id_ensaio": None,
+        "parametros_otimizados": result
     }).execute()
 
-    # ----------- Plot comparativo -----------
     fig, ax = plt.subplots()
-    ax.plot(df["time_s"], df["force_N"], "bo", label="Dados experimentais")
-    ax.plot(df["time_s"], poly(df["time_s"]), "r-", label="Ajuste Polinomial (grau 3)")
+    ax.plot(df["t_seconds"], df["surface_tension_mn_m"], "bo", label="Dados experimentais")
+    ax.plot(df["t_seconds"], poly(df["t_seconds"]), "r-", label="Ajuste Polinomial (grau 3)")
     ax.set_xlabel("Tempo (s)")
     ax.set_ylabel("Força (N)")
     ax.legend()
@@ -136,46 +129,59 @@ with abas[1]:
         sample_choice = st.selectbox("Escolha a amostra", df_samples["id"])
         tipo = st.radio("Tipo de experimento", ["Raman", "4 Pontas", "Tensiometria", "Ângulo de Contato"])
 
+        # Pega todos os measurements da amostra
+        measurements = supabase.table("measurements").select("*").eq("sample_id", sample_choice).execute().data
+        measurement_ids = [m["id"] for m in measurements] if measurements else []
+
+        data = []
         if tipo == "Raman":
-            data = supabase.table("raman_spectra").select("*").eq("sample_id", sample_choice).execute().data
-            df = pd.DataFrame(data) if data else pd.DataFrame()
+            for mid in measurement_ids:
+                pts = supabase.table("raman_spectra").select("*").eq("measurement_id", mid).execute().data
+                if pts: data.extend(pts)
+            df = pd.DataFrame(data)
             if not df.empty:
                 st.write(df.head())
                 fig, ax = plt.subplots()
-                ax.plot(df["wavenumber"], df["intensity"])
+                ax.plot(df["wavenumber_cm1"], df["intensity_a"])
                 st.pyplot(fig)
             else:
                 st.warning("Nenhum dado Raman encontrado.")
 
         elif tipo == "4 Pontas":
-            data = supabase.table("four_point_probe_points").select("*").eq("sample_id", sample_choice).execute().data
-            df = pd.DataFrame(data) if data else pd.DataFrame()
+            for mid in measurement_ids:
+                pts = supabase.table("four_point_probe_points").select("*").eq("measurement_id", mid).execute().data
+                if pts: data.extend(pts)
+            df = pd.DataFrame(data)
             if not df.empty:
                 st.write(df.head())
                 fig, ax = plt.subplots()
-                ax.plot(df["I_mA"], df["V_mV"], 'o-')
+                ax.plot(df["current_a"], df["voltage_v"], 'o-')
                 st.pyplot(fig)
             else:
                 st.warning("Nenhum dado 4 Pontas encontrado.")
 
         elif tipo == "Tensiometria":
-            data = supabase.table("tensiometry_points").select("*").eq("sample_id", sample_choice).execute().data
-            df = pd.DataFrame(data) if data else pd.DataFrame()
+            for mid in measurement_ids:
+                pts = supabase.table("tensiometry_points").select("*").eq("measurement_id", mid).execute().data
+                if pts: data.extend(pts)
+            df = pd.DataFrame(data)
             if not df.empty:
                 st.write(df.head())
                 fig, ax = plt.subplots()
-                ax.plot(df["time_s"], df["force_N"])
+                ax.plot(df["t_seconds"], df["surface_tension_mn_m"])
                 st.pyplot(fig)
             else:
                 st.warning("Nenhum dado de Tensiometria encontrado.")
 
         elif tipo == "Ângulo de Contato":
-            data = supabase.table("contact_angle_points").select("*").eq("sample_id", sample_choice).execute().data
-            df = pd.DataFrame(data) if data else pd.DataFrame()
+            for mid in measurement_ids:
+                pts = supabase.table("contact_angle_points").select("*").eq("measurement_id", mid).execute().data
+                if pts: data.extend(pts)
+            df = pd.DataFrame(data)
             if not df.empty:
                 st.write(df.head())
                 fig, ax = plt.subplots()
-                ax.plot(df["tempo_s"], df["angulo_deg"], "ro-")
+                ax.plot(df["t_seconds"], df["angle_mean_deg"], "ro-")
                 st.pyplot(fig)
             else:
                 st.warning("Nenhum dado de Ângulo de Contato encontrado.")
@@ -189,27 +195,35 @@ with abas[2]:
         sample_choice = st.selectbox("Selecione a amostra para otimizar", df_samples["id"], key="opt")
         tipo = st.radio("Escolha o experimento para otimizar", ["Raman", "4 Pontas", "Tensiometria"], key="opt_tipo")
 
-        if st.button("Rodar Otimização"):
+        # Pega measurements da amostra
+        measurements = supabase.table("measurements").select("*").eq("sample_id", sample_choice).execute().data
+        measurement_ids = [m["id"] for m in measurements] if measurements else []
+
+        data = []
+        for mid in measurement_ids:
             if tipo == "Raman":
-                data = supabase.table("raman_spectra").select("*").eq("sample_id", sample_choice).execute().data
-                df = pd.DataFrame(data)
-                if not df.empty:
-                    res = optimize_raman(df, sample_choice)
-                    st.success("✅ Otimização Raman concluída e salva!")
-                    st.json(res)
-
+                pts = supabase.table("raman_spectra").select("*").eq("measurement_id", mid).execute().data
             elif tipo == "4 Pontas":
-                data = supabase.table("four_point_probe_points").select("*").eq("sample_id", sample_choice).execute().data
-                df = pd.DataFrame(data)
-                if not df.empty:
-                    res = optimize_four_point(df, sample_choice)
-                    st.success("✅ Otimização 4 Pontas concluída e salva!")
-                    st.json(res)
-
+                pts = supabase.table("four_point_probe_points").select("*").eq("measurement_id", mid).execute().data
             elif tipo == "Tensiometria":
-                data = supabase.table("tensiometry_points").select("*").eq("sample_id", sample_choice).execute().data
-                df = pd.DataFrame(data)
-                if not df.empty:
-                    res = optimize_tensiometry(df, sample_choice)
-                    st.success("✅ Otimização Tensiometria concluída e salva!")
-                    st.json(res)
+                pts = supabase.table("tensiometry_points").select("*").eq("measurement_id", mid).execute().data
+            else:
+                pts = []
+            if pts: data.extend(pts)
+
+        if data:
+            df = pd.DataFrame(data)
+            if tipo == "Raman":
+                res = optimize_raman(df, sample_choice)
+                st.success("✅ Otimização Raman concluída e salva!")
+                st.json(res)
+            elif tipo == "4 Pontas":
+                res = optimize_four_point(df, sample_choice)
+                st.success("✅ Otimização 4 Pontas concluída e salva!")
+                st.json(res)
+            elif tipo == "Tensiometria":
+                res = optimize_tensiometry(df, sample_choice)
+                st.success("✅ Otimização Tensiometria concluída e salva!")
+                st.json(res)
+        else:
+            st.warning(f"Nenhum dado de {tipo} encontrado para otimização.")
