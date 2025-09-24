@@ -31,13 +31,14 @@ def optimize_raman(df, sample_id):
         "explained_variance": float(explained)
     }
 
-    # Salvar otimização no Supabase
-    supabase.table("resultadosotimizacao").insert({
-        "id_ensaio": None,  # Se tiver id_ensaio, colocar aqui
-        "parametros_otimizados": result
-    }).execute()
+    try:
+        supabase.table("resultadosotimizacao").insert({
+            "id_ensaio": None,  # ajustar se tiver id_ensaio
+            "parametros_otimizados": result
+        }).execute()
+    except Exception as e:
+        st.error(f"Erro ao salvar otimização Raman: {e}")
 
-    # Plot
     fig, ax = plt.subplots()
     ax.plot(df["wavenumber_cm1"], df["intensity_a"], label="Espectro Raman")
     ax.plot(df["wavenumber_cm1"].iloc[peaks], df["intensity_a"].iloc[peaks], "ro", label="Picos detectados")
@@ -58,10 +59,14 @@ def optimize_four_point(df, sample_id):
         "resistencia_linear": float(resistencia),
         "intercepto": float(model.intercept_)
     }
-    supabase.table("resultadosotimizacao").insert({
-        "id_ensaio": None,
-        "parametros_otimizados": result
-    }).execute()
+
+    try:
+        supabase.table("resultadosotimizacao").insert({
+            "id_ensaio": None,
+            "parametros_otimizados": result
+        }).execute()
+    except Exception as e:
+        st.error(f"Erro ao salvar otimização 4 Pontas: {e}")
 
     fig, ax = plt.subplots()
     ax.scatter(df["current_a"], df["voltage_v"], label="Dados experimentais")
@@ -82,10 +87,14 @@ def optimize_tensiometry(df, sample_id):
         "media_forca": float(media_forca),
         "coef_poly3": coef.tolist()
     }
-    supabase.table("resultadosotimizacao").insert({
-        "id_ensaio": None,
-        "parametros_otimizados": result
-    }).execute()
+
+    try:
+        supabase.table("resultadosotimizacao").insert({
+            "id_ensaio": None,
+            "parametros_otimizados": result
+        }).execute()
+    except Exception as e:
+        st.error(f"Erro ao salvar otimização Tensiometria: {e}")
 
     fig, ax = plt.subplots()
     ax.plot(df["t_seconds"], df["surface_tension_mn_m"], "bo", label="Dados experimentais")
@@ -130,61 +139,47 @@ with abas[1]:
         tipo = st.radio("Tipo de experimento", ["Raman", "4 Pontas", "Tensiometria", "Ângulo de Contato"])
 
         # Pega todos os measurements da amostra
-        measurements = supabase.table("measurements").select("*").eq("sample_id", sample_choice).execute().data
+        try:
+            measurements = supabase.table("measurements").select("*").eq("sample_id", sample_choice).execute().data
+        except Exception as e:
+            st.error(f"Erro ao buscar measurements: {e}")
+            measurements = []
         measurement_ids = [m["id"] for m in measurements] if measurements else []
 
         data = []
-        if tipo == "Raman":
-            for mid in measurement_ids:
-                pts = supabase.table("raman_spectra").select("*").eq("measurement_id", mid).execute().data
-                if pts: data.extend(pts)
-            df = pd.DataFrame(data)
-            if not df.empty:
-                st.write(df.head())
-                fig, ax = plt.subplots()
+        for mid in measurement_ids:
+            try:
+                if tipo == "Raman":
+                    response = supabase.table("raman_spectra").select("*").eq("measurement_id", mid).execute()
+                elif tipo == "4 Pontas":
+                    response = supabase.table("four_point_probe_points").select("*").eq("measurement_id", mid).execute()
+                elif tipo == "Tensiometria":
+                    response = supabase.table("tensiometry_points").select("*").eq("measurement_id", mid).execute()
+                elif tipo == "Ângulo de Contato":
+                    response = supabase.table("contact_angle_points").select("*").eq("measurement_id", mid).execute()
+                else:
+                    response = None
+
+                if response and response.data:
+                    data.extend(response.data)
+            except Exception as e:
+                st.error(f"Erro ao buscar dados do measurement_id {mid}: {e}")
+
+        df = pd.DataFrame(data) if data else pd.DataFrame()
+        if not df.empty:
+            st.write(df.head())
+            fig, ax = plt.subplots()
+            if tipo == "Raman":
                 ax.plot(df["wavenumber_cm1"], df["intensity_a"])
-                st.pyplot(fig)
-            else:
-                st.warning("Nenhum dado Raman encontrado.")
-
-        elif tipo == "4 Pontas":
-            for mid in measurement_ids:
-                pts = supabase.table("four_point_probe_points").select("*").eq("measurement_id", mid).execute().data
-                if pts: data.extend(pts)
-            df = pd.DataFrame(data)
-            if not df.empty:
-                st.write(df.head())
-                fig, ax = plt.subplots()
+            elif tipo == "4 Pontas":
                 ax.plot(df["current_a"], df["voltage_v"], 'o-')
-                st.pyplot(fig)
-            else:
-                st.warning("Nenhum dado 4 Pontas encontrado.")
-
-        elif tipo == "Tensiometria":
-            for mid in measurement_ids:
-                pts = supabase.table("tensiometry_points").select("*").eq("measurement_id", mid).execute().data
-                if pts: data.extend(pts)
-            df = pd.DataFrame(data)
-            if not df.empty:
-                st.write(df.head())
-                fig, ax = plt.subplots()
+            elif tipo == "Tensiometria":
                 ax.plot(df["t_seconds"], df["surface_tension_mn_m"])
-                st.pyplot(fig)
-            else:
-                st.warning("Nenhum dado de Tensiometria encontrado.")
-
-        elif tipo == "Ângulo de Contato":
-            for mid in measurement_ids:
-                pts = supabase.table("contact_angle_points").select("*").eq("measurement_id", mid).execute().data
-                if pts: data.extend(pts)
-            df = pd.DataFrame(data)
-            if not df.empty:
-                st.write(df.head())
-                fig, ax = plt.subplots()
+            elif tipo == "Ângulo de Contato":
                 ax.plot(df["t_seconds"], df["angle_mean_deg"], "ro-")
-                st.pyplot(fig)
-            else:
-                st.warning("Nenhum dado de Ângulo de Contato encontrado.")
+            st.pyplot(fig)
+        else:
+            st.warning(f"Nenhum dado de {tipo} encontrado.")
 
 # --------------------- Aba 3: Otimização ---------------------
 with abas[2]:
@@ -195,21 +190,29 @@ with abas[2]:
         sample_choice = st.selectbox("Selecione a amostra para otimizar", df_samples["id"], key="opt")
         tipo = st.radio("Escolha o experimento para otimizar", ["Raman", "4 Pontas", "Tensiometria"], key="opt_tipo")
 
-        # Pega measurements da amostra
-        measurements = supabase.table("measurements").select("*").eq("sample_id", sample_choice).execute().data
+        try:
+            measurements = supabase.table("measurements").select("*").eq("sample_id", sample_choice).execute().data
+        except Exception as e:
+            st.error(f"Erro ao buscar measurements: {e}")
+            measurements = []
         measurement_ids = [m["id"] for m in measurements] if measurements else []
 
         data = []
         for mid in measurement_ids:
-            if tipo == "Raman":
-                pts = supabase.table("raman_spectra").select("*").eq("measurement_id", mid).execute().data
-            elif tipo == "4 Pontas":
-                pts = supabase.table("four_point_probe_points").select("*").eq("measurement_id", mid).execute().data
-            elif tipo == "Tensiometria":
-                pts = supabase.table("tensiometry_points").select("*").eq("measurement_id", mid).execute().data
-            else:
-                pts = []
-            if pts: data.extend(pts)
+            try:
+                if tipo == "Raman":
+                    response = supabase.table("raman_spectra").select("*").eq("measurement_id", mid).execute()
+                elif tipo == "4 Pontas":
+                    response = supabase.table("four_point_probe_points").select("*").eq("measurement_id", mid).execute()
+                elif tipo == "Tensiometria":
+                    response = supabase.table("tensiometry_points").select("*").eq("measurement_id", mid).execute()
+                else:
+                    response = None
+
+                if response and response.data:
+                    data.extend(response.data)
+            except Exception as e:
+                st.error(f"Erro ao buscar dados do measurement_id {mid}: {e}")
 
         if data:
             df = pd.DataFrame(data)
@@ -224,6 +227,4 @@ with abas[2]:
             elif tipo == "Tensiometria":
                 res = optimize_tensiometry(df, sample_choice)
                 st.success("✅ Otimização Tensiometria concluída e salva!")
-                st.json(res)
-        else:
-            st.warning(f"Nenhum dado de {tipo} encontrado para otimização.")
+                st.json
