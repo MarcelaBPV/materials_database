@@ -10,7 +10,7 @@ import os
 
 # --------------------- Configuração da página ---------------------
 st.set_page_config(page_title="📊 Materials Database", layout="wide")
-st.title("Materials Database")
+st.title(" 📊 Materials Platform")
 
 # --------------------- Conexão Supabase ---------------------
 supabase_url = st.secrets["SUPABASE_URL"]
