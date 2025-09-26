@@ -17,141 +17,27 @@ supabase_url = st.secrets["SUPABASE_URL"]
 supabase_key = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(supabase_url, supabase_key)
 
-# --------------------- Carregar tabela de atribuições Raman ---------------------
-def load_atribuicoes():
-    path = os.path.join("data", "raman_atribuicoes.csv")
-    return pd.read_csv(path)
-
-def atribuir_picos(peak_positions, tol=15):
-    tabela = load_atribuicoes()
-    atribuicoes = []
-    for p in peak_positions:
-        match = tabela[tabela["Frequência (cm⁻¹)"].between(p - tol, p + tol)]
-        if not match.empty:
-            # Apenas a atribuição mais próxima
-            closest_idx = (match["Frequência (cm⁻¹)"] - p).abs().idxmin()
-            row = match.loc[closest_idx]
-            atribuicoes.append({
-                "Pico (cm⁻¹)": round(p, 1),
-                "Atribuição Molecular": row["Atribuição Molecular"],
-                "Componente Químico": row["Componente Químico"]
-            })
+# --------------------- Função para obter colunas válidas ---------------------
+def get_table_columns(table_name):
+    try:
+        data = supabase.table(table_name).select("*").limit(1).execute().data
+        if data:
+            return list(data[0].keys())
         else:
-            atribuicoes.append({
-                "Pico (cm⁻¹)": round(p, 1),
-                "Atribuição Molecular": "Não identificado",
-                "Componente Químico": ""
-            })
-    return pd.DataFrame(atribuicoes)
-
-# --------------------- Funções de otimização ---------------------
-def optimize_raman(df, sample_id):
-    peaks, _ = find_peaks(df["intensity_a"], height=np.mean(df["intensity_a"]))
-    peak_positions = df["wavenumber_cm1"].iloc[peaks].tolist()
-
-    atribuicoes = atribuir_picos(peak_positions)
-
-    # PCA
-    X = df[["wavenumber_cm1", "intensity_a"]].dropna()
-    pca = PCA(n_components=2)
-    pca.fit(X)
-    explained = pca.explained_variance_ratio_.sum()
-
-    result = {
-        "num_peaks": len(peak_positions),
-        "atribuições": atribuicoes.to_dict(orient="records"),
-        "explained_variance": float(explained)
-    }
-
-    try:
-        supabase.table("resultadosotimizacao").insert({
-            "id_ensaio": None,
-            "parametros_otimizados": result
-        }).execute()
+            # Se a tabela estiver vazia, usar nomes fixos conhecidos
+            predefined = {
+                "samples": ["sample_name", "description"],
+                "raman_spectra": ["measurement_id", "wavenumber_cm1", "intensity_a"],
+                "four_point_probe_points": ["measurement_id", "current_a", "voltage_v"],
+                "tensiometry_points": ["measurement_id", "t_seconds", "surface_tension_mn_m"],
+                "contact_angle_points": ["measurement_id", "t_seconds", "angle_mean_deg"]
+            }
+            return predefined.get(table_name, [])
     except Exception as e:
-        st.error(f"Erro ao salvar otimização Raman: {e}")
+        st.error(f"Erro ao obter colunas da tabela {table_name}: {e}")
+        return []
 
-    # Gráfico
-    fig, ax = plt.subplots()
-    ax.plot(df["wavenumber_cm1"], df["intensity_a"], label="Espectro Raman")
-    ax.plot(df["wavenumber_cm1"].iloc[peaks], df["intensity_a"].iloc[peaks], "ro", label="Picos detectados")
-
-    for _, row in atribuicoes.iterrows():
-        if row["Atribuição Molecular"] != "Não identificado":
-            ax.annotate(row["Atribuição Molecular"],
-                        (row["Pico (cm⁻¹)"], 
-                         df.loc[df["wavenumber_cm1"].sub(row["Pico (cm⁻¹)"]).abs().idxmin(), "intensity_a"]),
-                        textcoords="offset points", xytext=(0, 10),
-                        ha="center", fontsize=8, rotation=45)
-
-    ax.set_xlabel("Wavenumber (cm⁻¹)")
-    ax.set_ylabel("Intensidade (a.u.)")
-    ax.legend()
-    st.pyplot(fig)
-
-    st.subheader("📋 Picos atribuídos")
-    st.dataframe(atribuicoes)
-
-    return result
-
-def optimize_four_point(df, sample_id):
-    X = df[["current_a"]].values
-    y = df["voltage_v"].values
-    model = LinearRegression().fit(X, y)
-    resistencia = model.coef_[0]
-
-    result = {
-        "resistencia_linear": float(resistencia),
-        "intercepto": float(model.intercept_)
-    }
-
-    try:
-        supabase.table("resultadosotimizacao").insert({
-            "id_ensaio": None,
-            "parametros_otimizados": result
-        }).execute()
-    except Exception as e:
-        st.error(f"Erro ao salvar otimização 4 Pontas: {e}")
-
-    fig, ax = plt.subplots()
-    ax.scatter(df["current_a"], df["voltage_v"], label="Dados experimentais")
-    ax.plot(df["current_a"], model.predict(X), "r-", label=f"Ajuste Linear (R={resistencia:.2f})")
-    ax.set_xlabel("Corrente (A)")
-    ax.set_ylabel("Tensão (V)")
-    ax.legend()
-    st.pyplot(fig)
-
-    return result
-
-def optimize_tensiometry(df, sample_id):
-    media_forca = df["surface_tension_mn_m"].mean()
-    coef = np.polyfit(df["t_seconds"], df["surface_tension_mn_m"], 3)
-    poly = np.poly1d(coef)
-
-    result = {
-        "media_forca": float(media_forca),
-        "coef_poly3": coef.tolist()
-    }
-
-    try:
-        supabase.table("resultadosotimizacao").insert({
-            "id_ensaio": None,
-            "parametros_otimizados": result
-        }).execute()
-    except Exception as e:
-        st.error(f"Erro ao salvar otimização Tensiometria: {e}")
-
-    fig, ax = plt.subplots()
-    ax.plot(df["t_seconds"], df["surface_tension_mn_m"], "bo", label="Dados experimentais")
-    ax.plot(df["t_seconds"], poly(df["t_seconds"]), "r-", label="Ajuste Polinomial (grau 3)")
-    ax.set_xlabel("Tempo (s)")
-    ax.set_ylabel("Força (N)")
-    ax.legend()
-    st.pyplot(fig)
-
-    return result
-
-# --------------------- Carregamento de dados ---------------------
+# --------------------- Carregamento de amostras ---------------------
 @st.cache_data(ttl=300)
 def load_samples():
     try:
@@ -170,7 +56,7 @@ abas = st.tabs(["1 Amostras", "2 Ensaios", "3 Otimização"])
 with abas[0]:
     st.header("1 Gerenciamento de Amostras")
     
-    # Upload de CSV para nova amostra
+    # Upload CSV
     st.subheader("📥 Importar nova amostra")
     uploaded_file = st.file_uploader("Escolha um arquivo CSV", type="csv")
     
@@ -179,21 +65,21 @@ with abas[0]:
             new_sample_df = pd.read_csv(uploaded_file)
             st.write("Pré-visualização do CSV:")
             st.dataframe(new_sample_df.head())
-            
+
             if st.button("Cadastrar amostras no banco"):
+                valid_columns = get_table_columns("samples")
                 for _, row in new_sample_df.iterrows():
+                    filtered_row = {k: v for k, v in row.to_dict().items() if k in valid_columns}
                     try:
-                        supabase.table("samples").insert(row.to_dict()).execute()
+                        supabase.table("samples").insert(filtered_row).execute()
                     except Exception as e:
                         st.error(f"Erro ao cadastrar amostra: {e}")
                 st.success("✅ Amostras cadastradas com sucesso!")
-                
-                # Atualiza a lista de amostras
-                df_samples = load_samples()
+                df_samples = load_samples()  # atualizar tabela
         except Exception as e:
             st.error(f"Erro ao ler CSV: {e}")
 
-    # Mostrar tabela de amostras existentes
+    # Tabela de amostras existentes
     st.subheader("Amostras cadastradas")
     if df_samples.empty:
         st.info("Nenhuma amostra cadastrada ainda.")
@@ -214,23 +100,23 @@ with abas[1]:
         except Exception as e:
             st.error(f"Erro ao buscar measurements: {e}")
             measurements = []
+
         measurement_ids = [m["id"] for m in measurements] if measurements else []
 
         data = []
         for mid in measurement_ids:
             try:
-                if tipo == "Raman":
-                    response = supabase.table("raman_spectra").select("*").eq("measurement_id", mid).execute()
-                elif tipo == "4 Pontas":
-                    response = supabase.table("four_point_probe_points").select("*").eq("measurement_id", mid).execute()
-                elif tipo == "Tensiometria":
-                    response = supabase.table("tensiometry_points").select("*").eq("measurement_id", mid).execute()
-                elif tipo == "Ângulo de Contato":
-                    response = supabase.table("contact_angle_points").select("*").eq("measurement_id", mid).execute()
-                else:
-                    response = None
-                if response and response.data:
-                    data.extend(response.data)
+                table_map = {
+                    "Raman": "raman_spectra",
+                    "4 Pontas": "four_point_probe_points",
+                    "Tensiometria": "tensiometry_points",
+                    "Ângulo de Contato": "contact_angle_points"
+                }
+                table_name = table_map.get(tipo)
+                if table_name:
+                    response = supabase.table(table_name).select("*").eq("measurement_id", mid).execute()
+                    if response and response.data:
+                        data.extend(response.data)
             except Exception as e:
                 st.error(f"Erro ao buscar dados do measurement_id {mid}: {e}")
 
@@ -264,35 +150,50 @@ with abas[2]:
         except Exception as e:
             st.error(f"Erro ao buscar measurements: {e}")
             measurements = []
+
         measurement_ids = [m["id"] for m in measurements] if measurements else []
 
         data = []
         for mid in measurement_ids:
             try:
-                if tipo == "Raman":
-                    response = supabase.table("raman_spectra").select("*").eq("measurement_id", mid).execute()
-                elif tipo == "4 Pontas":
-                    response = supabase.table("four_point_probe_points").select("*").eq("measurement_id", mid).execute()
-                elif tipo == "Tensiometria":
-                    response = supabase.table("tensiometry_points").select("*").eq("measurement_id", mid).execute()
-                else:
-                    response = None
-                if response and response.data:
-                    data.extend(response.data)
+                table_map = {
+                    "Raman": "raman_spectra",
+                    "4 Pontas": "four_point_probe_points",
+                    "Tensiometria": "tensiometry_points"
+                }
+                table_name = table_map.get(tipo)
+                if table_name:
+                    response = supabase.table(table_name).select("*").eq("measurement_id", mid).execute()
+                    if response and response.data:
+                        data.extend(response.data)
             except Exception as e:
                 st.error(f"Erro ao buscar dados do measurement_id {mid}: {e}")
 
-        if data:
-            df = pd.DataFrame(data)
+        df = pd.DataFrame(data) if data else pd.DataFrame()
+        
+        if not df.empty:
             if tipo == "Raman":
-                res = optimize_raman(df, sample_choice)
-                st.success("✅ Otimização Raman concluída e salva!")
-                st.json(res)
+                peaks, _ = find_peaks(df["intensity_a"], height=np.mean(df["intensity_a"]))
+                peak_positions = df["wavenumber_cm1"].iloc[peaks].tolist()
+                st.write("Picos detectados:", peak_positions)
+                fig, ax = plt.subplots()
+                ax.plot(df["wavenumber_cm1"], df["intensity_a"], label="Espectro Raman")
+                ax.plot(df["wavenumber_cm1"].iloc[peaks], df["intensity_a"].iloc[peaks], "ro")
+                st.pyplot(fig)
             elif tipo == "4 Pontas":
-                res = optimize_four_point(df, sample_choice)
-                st.success("✅ Otimização 4 Pontas concluída e salva!")
-                st.json(res)
+                X = df[["current_a"]].values
+                y = df["voltage_v"].values
+                model = LinearRegression().fit(X, y)
+                fig, ax = plt.subplots()
+                ax.scatter(df["current_a"], df["voltage_v"], label="Dados")
+                ax.plot(df["current_a"], model.predict(X), 'r-', label="Ajuste Linear")
+                st.pyplot(fig)
             elif tipo == "Tensiometria":
-                res = optimize_tensiometry(df, sample_choice)
-                st.success("✅ Otimização Tensiometria concluída e salva!")
-                st.json(res)
+                coef = np.polyfit(df["t_seconds"], df["surface_tension_mn_m"], 3)
+                poly = np.poly1d(coef)
+                fig, ax = plt.subplots()
+                ax.plot(df["t_seconds"], df["surface_tension_mn_m"], 'bo')
+                ax.plot(df["t_seconds"], poly(df["t_seconds"]), 'r-')
+                st.pyplot(fig)
+        else:
+            st.warning(f"Nenhum dado de {tipo} encontrado.")
