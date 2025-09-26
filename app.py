@@ -10,7 +10,7 @@ import os
 
 # --------------------- Configuração da página ---------------------
 st.set_page_config(page_title="📊 Materials Database", layout="wide")
-st.title(" 📊 Materials Platform")
+st.title("Materials Database")
 
 # --------------------- Conexão Supabase ---------------------
 supabase_url = st.secrets["SUPABASE_URL"]
@@ -28,12 +28,14 @@ def atribuir_picos(peak_positions, tol=15):
     for p in peak_positions:
         match = tabela[tabela["Frequência (cm⁻¹)"].between(p - tol, p + tol)]
         if not match.empty:
-            for _, row in match.iterrows():
-                atribuicoes.append({
-                    "Pico (cm⁻¹)": round(p, 1),
-                    "Atribuição Molecular": row["Atribuição Molecular"],
-                    "Componente Químico": row["Componente Químico"]
-                })
+            # Apenas a atribuição mais próxima
+            closest_idx = (match["Frequência (cm⁻¹)"] - p).abs().idxmin()
+            row = match.loc[closest_idx]
+            atribuicoes.append({
+                "Pico (cm⁻¹)": round(p, 1),
+                "Atribuição Molecular": row["Atribuição Molecular"],
+                "Componente Químico": row["Componente Químico"]
+            })
         else:
             atribuicoes.append({
                 "Pico (cm⁻¹)": round(p, 1),
@@ -47,7 +49,6 @@ def optimize_raman(df, sample_id):
     peaks, _ = find_peaks(df["intensity_a"], height=np.mean(df["intensity_a"]))
     peak_positions = df["wavenumber_cm1"].iloc[peaks].tolist()
 
-    # Atribuições
     atribuicoes = atribuir_picos(peak_positions)
 
     # PCA
@@ -64,7 +65,7 @@ def optimize_raman(df, sample_id):
 
     try:
         supabase.table("resultadosotimizacao").insert({
-            "id_ensaio": None,  # ajustar se tiver id_ensaio
+            "id_ensaio": None,
             "parametros_otimizados": result
         }).execute()
     except Exception as e:
@@ -168,6 +169,32 @@ abas = st.tabs(["1 Amostras", "2 Ensaios", "3 Otimização"])
 # --------------------- Aba 1: Amostras ---------------------
 with abas[0]:
     st.header("1 Gerenciamento de Amostras")
+    
+    # Upload de CSV para nova amostra
+    st.subheader("📥 Importar nova amostra")
+    uploaded_file = st.file_uploader("Escolha um arquivo CSV", type="csv")
+    
+    if uploaded_file is not None:
+        try:
+            new_sample_df = pd.read_csv(uploaded_file)
+            st.write("Pré-visualização do CSV:")
+            st.dataframe(new_sample_df.head())
+            
+            if st.button("Cadastrar amostras no banco"):
+                for _, row in new_sample_df.iterrows():
+                    try:
+                        supabase.table("samples").insert(row.to_dict()).execute()
+                    except Exception as e:
+                        st.error(f"Erro ao cadastrar amostra: {e}")
+                st.success("✅ Amostras cadastradas com sucesso!")
+                
+                # Atualiza a lista de amostras
+                df_samples = load_samples()
+        except Exception as e:
+            st.error(f"Erro ao ler CSV: {e}")
+
+    # Mostrar tabela de amostras existentes
+    st.subheader("Amostras cadastradas")
     if df_samples.empty:
         st.info("Nenhuma amostra cadastrada ainda.")
     else:
