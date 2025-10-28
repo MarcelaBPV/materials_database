@@ -8,7 +8,7 @@ from scipy.signal import find_peaks
 
 # --------------------- Configuração da página ---------------------
 st.set_page_config(page_title="📊 Materials Database", layout="wide")
-st.title("Materials Database")
+st.title("📊 Plataforma de Caracterização de Superfície de Materiais")
 
 # --------------------- Conexão Supabase ---------------------
 supabase_url = st.secrets["SUPABASE_URL"]
