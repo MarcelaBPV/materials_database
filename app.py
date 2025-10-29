@@ -4,7 +4,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 from supabase import create_client, Client
 from sklearn.linear_model import LinearRegression
-from scipy.signal import find_peaks
+
+# Importa o pipeline modular
+from raman_processing import process_raman_pipeline, compare_spectra
 
 # --------------------- Configuração da página ---------------------
 st.set_page_config(page_title="📊 Materials Database", layout="wide")
@@ -208,12 +210,25 @@ with abas[2]:
 
         if not df.empty:
             if tipo == "Raman":
-                peaks, _ = find_peaks(df["intensity_a"], height=np.mean(df["intensity_a"]))
-                st.write("Picos detectados:", df["wavenumber_cm1"].iloc[peaks].tolist())
-                fig, ax = plt.subplots()
-                ax.plot(df["wavenumber_cm1"], df["intensity_a"], label="Espectro Raman")
-                ax.plot(df["wavenumber_cm1"].iloc[peaks], df["intensity_a"].iloc[peaks], "ro")
+                processed, peaks, fig = process_raman_pipeline(df)
                 st.pyplot(fig)
+                st.write("Picos detectados:")
+                st.dataframe(peaks)
+
+                # Comparar com outra amostra
+                st.subheader("Comparar com outra amostra")
+                other_sample = st.selectbox("Amostra de referência", df_samples["id"])
+                if st.button("Comparar espectros"):
+                    ref_meas = supabase.table("measurements").select("*").eq("sample_id", other_sample).eq("type", "raman").execute().data
+                    if ref_meas:
+                        ref_id = ref_meas[0]["id"]
+                        ref_data = supabase.table("raman_spectra").select("*").eq("measurement_id", ref_id).execute().data
+                        df_ref = pd.DataFrame(ref_data)
+                        from raman_processing import load_raman_dataframe, preprocess_spectrum
+                        spec_ref = preprocess_spectrum(load_raman_dataframe(df_ref))
+                        similarity = compare_spectra(processed, spec_ref)
+                        st.info(f"Similaridade espectral: **{similarity:.3f}**")
+
             elif tipo == "4 Pontas":
                 X = df[["current_a"]].values
                 y = df["voltage_v"].values
@@ -221,7 +236,9 @@ with abas[2]:
                 fig, ax = plt.subplots()
                 ax.scatter(df["current_a"], df["voltage_v"], label="Dados")
                 ax.plot(df["current_a"], model.predict(X), "r-", label="Ajuste Linear")
+                ax.legend()
                 st.pyplot(fig)
+
             elif tipo == "Ângulo de Contato":
                 coef = np.polyfit(df["t_seconds"], df["angle_mean_deg"], 3)
                 poly = np.poly1d(coef)
