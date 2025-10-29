@@ -1,112 +1,130 @@
 """
 raman_processing.py
-Pipeline modular para processamento e otimização de espectros Raman
-usando biblioteca do MIT (ramanchada2) e técnicas de IA.
+Pipeline modular para processamento de espectros Raman.
+- Tenta usar a biblioteca do MIT (ramanchada2).
+- Se não estiver disponível, entra em fallback com SciPy/Numpy.
 """
 
 import numpy as np
 import pandas as pd
-from ramanchada2 import rc2
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics.pairwise import cosine_similarity
 import matplotlib.pyplot as plt
-import io
 
-# ---------------------- 1. Funções de Pré-Processamento ----------------------
+# ---------------------- Tentativa de usar ramanchada2 ----------------------
+RC2_OK = True
+try:
+    from ramanchada2 import rc2
+except Exception:
+    RC2_OK = False
+
+# ---------------------- Fallback (SciPy/Numpy) -----------------------------
+if not RC2_OK:
+    from scipy.signal import savgol_filter, find_peaks
+
+# ====================== 1. Leitura / Conversão ============================
 
 def load_raman_dataframe(df: pd.DataFrame):
     """
-    Converte DataFrame em objeto Spectrum do ramanchada2.
+    Se RC2_OK: converte para rc2.spectrum.
+    Caso contrário: retorna uma tupla (x, y) numpy.
     """
-    try:
-        spectrum = rc2.spectrum.from_array(df["wavenumber_cm1"], df["intensity_a"])
-        return spectrum
-    except Exception as e:
-        raise ValueError(f"Erro ao carregar espectro Raman: {e}")
+    if not {"wavenumber_cm1", "intensity_a"}.issubset(df.columns):
+        raise ValueError("DataFrame precisa ter colunas: wavenumber_cm1 e intensity_a")
 
+    x = np.asarray(df["wavenumber_cm1"].values, dtype=float)
+    y = np.asarray(df["intensity_a"].values, dtype=float)
+
+    if RC2_OK:
+        return rc2.spectrum.from_array(x, y)
+    else:
+        return (x, y)
+
+# ====================== 2. Pré-processamento ===============================
 
 def preprocess_spectrum(spectrum, smooth_window=9):
     """
-    Corrige baseline, suaviza e normaliza o espectro.
+    Se RC2_OK: baseline_subtract + smooth + normalize('area')
+    Fallback: baseline polinomial + Savitzky-Golay + normalização pela área.
     """
-    processed = (
-        spectrum.copy()
-        .baseline_subtract()     # remove ruído de fundo
-        .smooth(window_length=smooth_window)
-        .normalize(mode="area")  # normalização pela área total
-    )
-    return processed
+    if RC2_OK:
+        return (
+            spectrum.copy()
+            .baseline_subtract()
+            .smooth(window_length=smooth_window)
+            .normalize(mode="area")
+        )
 
+    # ---- Fallback ----
+    x, y = spectrum
+    # baseline polinomial de grau 3 (simples/rápido)
+    coef = np.polyfit(x, y, deg=3)
+    baseline = np.poly1d(coef)(x)
+    y_corr = y - baseline
+    # suavização Savitzky–Golay (janela ímpar)
+    window = smooth_window if smooth_window % 2 == 1 else smooth_window + 1
+    y_smooth = savgol_filter(y_corr, window_length=window, polyorder=3, mode="interp")
+    # normalização pela área
+    area = np.trapz(np.abs(y_smooth), x)
+    y_norm = y_smooth / (area if area != 0 else 1.0)
+    return (x, y_norm)
 
-# ---------------------- 2. Identificação de Picos ----------------------
+# ====================== 3. Detecção de picos ===============================
 
 def detect_peaks(processed_spectrum, prominence=0.05):
     """
-    Detecta picos e retorna posições e intensidades.
+    Retorna DataFrame com colunas: wavenumber_cm1, intensity_a.
     """
-    peaks = processed_spectrum.find_peaks(prominence=prominence)
-    peak_positions = [p.x for p in peaks]
-    peak_intensities = [p.y for p in peaks]
-    return pd.DataFrame({"wavenumber_cm1": peak_positions, "intensity_a": peak_intensities})
+    if RC2_OK:
+        peaks = processed_spectrum.find_peaks(prominence=prominence)
+        peak_positions = [p.x for p in peaks]
+        peak_intensities = [p.y for p in peaks]
+        return pd.DataFrame({"wavenumber_cm1": peak_positions, "intensity_a": peak_intensities})
 
+    # ---- Fallback (SciPy) ----
+    x, y = processed_spectrum
+    # limiar relativo simples
+    prom = float(prominence) * (np.max(y) - np.min(y))
+    idx, _ = find_peaks(y, prominence=max(prom, 1e-9))
+    return pd.DataFrame({"wavenumber_cm1": x[idx], "intensity_a": y[idx]})
 
-# ---------------------- 3. Clustering e Similaridade ----------------------
-
-def cluster_spectra(list_of_spectra, n_clusters=3):
-    """
-    Realiza clusterização de múltiplos espectros para encontrar padrões.
-    Retorna rótulos e modelo KMeans.
-    """
-    all_data = []
-    for spec in list_of_spectra:
-        all_data.append(spec.y)
-    X = np.vstack(all_data)
-    X_scaled = StandardScaler().fit_transform(X)
-    model = KMeans(n_clusters=n_clusters, random_state=0).fit(X_scaled)
-    return model.labels_, model
-
+# ====================== 4. Similaridade ====================================
 
 def compare_spectra(spec1, spec2):
     """
-    Calcula similaridade de cosseno entre dois espectros.
-    Retorna valor entre 0 e 1.
+    Similaridade do cosseno entre dois espectros pré-processados.
     """
-    y1 = spec1.y / np.linalg.norm(spec1.y)
-    y2 = spec2.y / np.linalg.norm(spec2.y)
-    sim = cosine_similarity([y1], [y2])[0][0]
-    return sim
+    if RC2_OK:
+        y1 = spec1.y
+        y2 = spec2.y
+    else:
+        _, y1 = spec1
+        _, y2 = spec2
 
+    y1 = y1 / (np.linalg.norm(y1) + 1e-12)
+    y2 = y2 / (np.linalg.norm(y2) + 1e-12)
+    return float(np.dot(y1, y2))
 
-# ---------------------- 4. Visualização ----------------------
+# ====================== 5. Visualização ====================================
 
 def plot_spectrum_with_peaks(processed_spectrum, peaks_df):
-    """
-    Gera gráfico matplotlib com picos detectados.
-    Retorna objeto fig (para Streamlit).
-    """
     fig, ax = plt.subplots()
-    ax.plot(processed_spectrum.x, processed_spectrum.y, label="Espectro Raman (tratado)")
-    ax.plot(peaks_df["wavenumber_cm1"], peaks_df["intensity_a"], "ro", label="Picos")
+    if RC2_OK:
+        ax.plot(processed_spectrum.x, processed_spectrum.y, label="Espectro (tratado)")
+    else:
+        x, y = processed_spectrum
+        ax.plot(x, y, label="Espectro (tratado)")
+
+    ax.plot(peaks_df["wavenumber_cm1"], peaks_df["intensity_a"], "o", label="Picos")
     ax.set_xlabel("Número de onda (cm⁻¹)")
     ax.set_ylabel("Intensidade (a.u.)")
     ax.legend()
-    ax.grid(True)
+    ax.grid(True, alpha=0.3)
     return fig
 
+# ====================== 6. Pipeline principal ===============================
 
-# ---------------------- 5. Pipeline Principal ----------------------
-
-def process_raman_pipeline(df):
-    """
-    Executa o pipeline completo de:
-    - Leitura do espectro
-    - Pré-processamento
-    - Detecção de picos
-    - Retorna dados e gráfico
-    """
-    spectrum = load_raman_dataframe(df)
-    processed = preprocess_spectrum(spectrum)
+def process_raman_pipeline(df: pd.DataFrame):
+    spec = load_raman_dataframe(df)
+    processed = preprocess_spectrum(spec)
     peaks = detect_peaks(processed)
     fig = plot_spectrum_with_peaks(processed, peaks)
     return processed, peaks, fig
