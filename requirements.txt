@@ -1,7 +1,7 @@
 streamlit
 pandas
-matplotlib
 numpy
-scikit-learn
+matplotlib
 supabase
-psycopg2-binary
+scikit-learn
+ramanchada2
