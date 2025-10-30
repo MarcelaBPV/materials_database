@@ -1,8 +1,22 @@
-streamlit==1.39.0
-pandas==2.1.4
-numpy==1.26.4
-scipy==1.11.4
-matplotlib==3.8.2
-scikit-learn==1.3.2
-supabase==2.4.0
-ramanchada2==0.8.1
+# Interface e controle
+streamlit>=1.39.0
+matplotlib>=3.9.0
+pandas>=2.2.2
+numpy>=1.26.4
+
+# Banco de dados (Supabase)
+supabase>=2.4.0
+postgrest>=0.13.0
+
+# Machine Learning e modelagem
+scikit-learn>=1.5.0
+
+# Processamento Raman (MIT)
+ramanchada2>=0.8.0
+
+# Utilitários
+python-dotenv>=1.0.1
+
+# Compatibilidade geral
+typing-extensions>=4.12.2
+requests>=2.32.3
