@@ -1,5 +1,4 @@
 # app.py
-# -*- coding: utf-8 -*-
 import os
 import io
 import math
@@ -14,17 +13,15 @@ from supabase import create_client, Client
 from sklearn.linear_model import LinearRegression
 
 # >>> Integração com o pipeline Raman (usa ramanchada2 dentro de raman_processing.py)
-# As funções abaixo devem existir no seu raman_processing.py:
-# - load_raman_dataframe(df_raw) -> pd.DataFrame[['wavenumber_cm1','intensity_a']]
-# - preprocess_spectrum(df_spec, **kwargs) -> objeto compatível
-# - process_raman_pipeline(df_spec, **kwargs) -> (processed_spec, peaks_df, fig)
-# - compare_spectra(spec_a, spec_b) -> float
 from raman_processing import (
     process_raman_pipeline,
     compare_spectra,
     load_raman_dataframe,
     preprocess_spectrum,
 )
+
+# >>> IA para identificação molecular automática
+from molecular_identification import identify_molecular_groups
 
 # --------------------- Configuração de página ---------------------
 st.set_page_config(page_title="📊 Materials Database", layout="wide")
@@ -61,9 +58,9 @@ def get_client(url: str, key: str) -> Client:
 
 supabase: Client = get_client(SUPABASE_URL, SUPABASE_KEY)
 
-# --------------------- Utilidades de performance ---------------------
-CHUNK_SIZE = 5000            # inserções em lotes para grandes arquivos
-MAX_POINTS_PLOT = 8000       # limita pontos desenhados para não travar
+# --------------------- Utilidades ---------------------
+CHUNK_SIZE = 5000
+MAX_POINTS_PLOT = 8000
 
 def df_downsample_for_plot(df: pd.DataFrame, x: str, y: str, max_pts: int = MAX_POINTS_PLOT):
     if len(df) <= max_pts:
@@ -89,7 +86,7 @@ def insert_in_chunks(table: str, rows: List[Dict[str, Any]], chunk_size: int = C
         total += len(chunk)
     return total
 
-# --------------------- Esquema conhecido (para validação) ---------------------
+# --------------------- Estrutura Supabase ---------------------
 def get_table_columns(table_name: str) -> List[str]:
     predefined = {
         "samples": ["id", "category_id", "sample_name", "description", "created_at"],
@@ -102,7 +99,7 @@ def get_table_columns(table_name: str) -> List[str]:
     }
     return predefined.get(table_name, [])
 
-# --------------------- Cache de dados principais ---------------------
+# --------------------- Cache de dados ---------------------
 @st.cache_data(ttl=300, show_spinner=False)
 def load_samples_df() -> pd.DataFrame:
     try:
@@ -131,7 +128,7 @@ def refresh_samples():
 if "samples_df" not in st.session_state:
     st.session_state["samples_df"] = load_samples_df()
 
-# --------------------- Funções de importação por tipo ---------------------
+# --------------------- Importação de ensaios ---------------------
 def get_or_create_measurement(sample_id: int, exp_type: str) -> int:
     res = (
         supabase.table("measurements")
@@ -147,7 +144,6 @@ def get_or_create_measurement(sample_id: int, exp_type: str) -> int:
     return new_m.data[0]["id"]
 
 def import_raman(df: pd.DataFrame, sample_id: int) -> int:
-    # Tenta normalizar automaticamente formatos típicos
     df = df.rename(columns={
         "Wavenumber": "wavenumber_cm1",
         "wavenumber": "wavenumber_cm1",
@@ -159,11 +155,7 @@ def import_raman(df: pd.DataFrame, sample_id: int) -> int:
         raise ValueError(f"CSV/TSV precisa conter colunas: {sorted(required)}")
     measurement_id = get_or_create_measurement(sample_id, "raman")
     rows = [
-        {
-            "measurement_id": measurement_id,
-            "wavenumber_cm1": float(r["wavenumber_cm1"]),
-            "intensity_a": float(r["intensity_a"]),
-        }
+        {"measurement_id": measurement_id, "wavenumber_cm1": float(r["wavenumber_cm1"]), "intensity_a": float(r["intensity_a"])}
         for _, r in df.iterrows()
     ]
     return insert_in_chunks("raman_spectra", rows)
@@ -175,11 +167,7 @@ def import_4p(df: pd.DataFrame, sample_id: int) -> int:
         raise ValueError(f"CSV precisa conter colunas: {sorted(required)}")
     measurement_id = get_or_create_measurement(sample_id, "4_pontas")
     rows = [
-        {
-            "measurement_id": measurement_id,
-            "current_a": float(r["current_a"]),
-            "voltage_v": float(r["voltage_v"]),
-        }
+        {"measurement_id": measurement_id, "current_a": float(r["current_a"]), "voltage_v": float(r["voltage_v"])}
         for _, r in df.iterrows()
     ]
     return insert_in_chunks("four_point_probe_points", rows)
@@ -191,11 +179,7 @@ def import_contact_angle(df: pd.DataFrame, sample_id: int) -> int:
         raise ValueError(f"CSV precisa conter colunas: {sorted(required)}")
     measurement_id = get_or_create_measurement(sample_id, "tensiometria")
     rows = [
-        {
-            "measurement_id": measurement_id,
-            "t_seconds": float(r["t_seconds"]),
-            "angle_mean_deg": float(r["angle_mean_deg"]),
-        }
+        {"measurement_id": measurement_id, "t_seconds": float(r["t_seconds"]), "angle_mean_deg": float(r["angle_mean_deg"])}
         for _, r in df.iterrows()
     ]
     return insert_in_chunks("contact_angle_points", rows)
@@ -207,23 +191,20 @@ def import_profilometry(df: pd.DataFrame, sample_id: int) -> int:
         raise ValueError(f"CSV precisa conter colunas: {sorted(required)}")
     measurement_id = get_or_create_measurement(sample_id, "perfilometria")
     rows = [
-        {
-            "measurement_id": measurement_id,
-            "position_um": float(r["position_um"]),
-            "height_nm": float(r["height_nm"]),
-        }
+        {"measurement_id": measurement_id, "position_um": float(r["position_um"]), "height_nm": float(r["height_nm"])}
         for _, r in df.iterrows()
     ]
     return insert_in_chunks("profilometry_points", rows)
 
-# --------------------- Tabs ---------------------
+# --------------------- Interface ---------------------
 tabs = st.tabs(["1 Amostras", "2 Ensaios", "3 Otimização"])
 
 # ===================== Aba 1: Amostras =====================
 with tabs[0]:
     st.header("1) Gerenciamento de Amostras")
-
     col_a, col_b = st.columns([1, 1])
+
+    # Importação via CSV
     with col_a:
         st.subheader("📥 Importar amostras via CSV")
         up_s = st.file_uploader("Escolha um CSV de amostras", type="csv", key="samples_csv")
@@ -234,7 +215,6 @@ with tabs[0]:
                 st.dataframe(df_new.head(20), use_container_width=True)
                 if st.button("Cadastrar amostras no banco"):
                     valid = set(get_table_columns("samples"))
-                    inserted = 0
                     rows = []
                     for _, row in df_new.iterrows():
                         payload = {k: v for k, v in row.to_dict().items() if k in valid and pd.notna(v)}
@@ -242,16 +222,16 @@ with tabs[0]:
                             rows.append(payload)
                     if rows:
                         inserted = insert_in_chunks("samples", rows, chunk_size=1000)
-                    st.success(f"✅ Amostras cadastradas: {inserted}")
-                    refresh_samples()
+                        st.success(f"✅ Amostras cadastradas: {inserted}")
+                        refresh_samples()
             except Exception as e:
                 st.error(f"Erro ao ler CSV: {e}")
 
+    # Cadastro manual
     with col_b:
         st.subheader("➕ Cadastrar amostra manualmente")
         sample_name = st.text_input("Nome da amostra")
         sample_desc = st.text_area("Descrição")
-        # categorias (opcional)
         cats = load_categories_df()
         cat_id = None
         if not cats.empty:
@@ -285,18 +265,15 @@ with tabs[1]:
     else:
         sample_choice = st.selectbox("Escolha a amostra", df_samples["id"], key="ens_sample")
         tipo = st.radio("Tipo de experimento", ["Raman", "4 Pontas", "Ângulo de Contato", "Perfilometria"], horizontal=True)
-
         st.subheader(f"📤 Importar arquivo de {tipo}")
         uploaded = st.file_uploader(f"Arquivo para {tipo}", type=["csv", "tsv", "txt", "log", "LOG"])
 
         if uploaded is not None:
             try:
-                # Detecta separador comum
                 name = uploaded.name.lower()
                 if name.endswith(".tsv"):
                     df_file = pd.read_csv(uploaded, sep="\t", engine="python", comment="#")
                 else:
-                    # muitos equipamentos exportam primeira linha de cabeçalho simples
                     try:
                         df_file = pd.read_csv(uploaded, engine="python", comment="#")
                     except Exception:
@@ -305,10 +282,8 @@ with tabs[1]:
 
                 st.write("Prévia:")
                 st.dataframe(df_file.head(20), use_container_width=True)
-
                 if st.button("Enviar para o banco"):
                     if tipo == "Raman":
-                        # padroniza para colunas esperadas; se for export de equipamento (2 colunas sem header)
                         if df_file.shape[1] == 2 and set(df_file.columns) == {0, 1}:
                             df_file.columns = ["wavenumber_cm1", "intensity_a"]
                         count = import_raman(df_file, int(sample_choice))
@@ -325,62 +300,6 @@ with tabs[1]:
             except Exception as e:
                 st.error(f"Erro ao importar: {e}")
 
-        # ---- Visualização do que já existe para a amostra/tipo selecionados
-        st.subheader(f"Dados existentes de {tipo}")
-        table_map = {
-            "Raman": "raman_spectra",
-            "4 Pontas": "four_point_probe_points",
-            "Ângulo de Contato": "contact_angle_points",
-            "Perfilometria": "profilometry_points",
-        }
-        table_name = table_map.get(tipo)
-
-        df_existing = pd.DataFrame()
-        if table_name:
-            # pega todos os measurements desta amostra deste tipo
-            ms = (
-                supabase.table("measurements")
-                .select("id")
-                .eq("sample_id", int(sample_choice))
-                .eq("type", table_name.replace("_points", "").replace("raman_spectra", "raman").replace("profilometry", "perfilometria"))
-                .execute()
-                .data
-            )
-            mids = [m["id"] for m in ms] if ms else []
-            rows = []
-            for mid in mids:
-                resp = supabase.table(table_name).select("*").eq("measurement_id", mid).execute()
-                if resp and resp.data:
-                    rows.extend(resp.data)
-            if rows:
-                df_existing = pd.DataFrame(rows)
-
-        if df_existing.empty:
-            st.info("Sem dados para exibir.")
-        else:
-            fig, ax = plt.subplots()
-            if tipo == "Raman":
-                plot_df = df_downsample_for_plot(df_existing.sort_values("wavenumber_cm1"), "wavenumber_cm1", "intensity_a")
-                ax.plot(plot_df["wavenumber_cm1"], plot_df["intensity_a"])
-                ax.set_xlabel("Número de onda (cm⁻¹)")
-                ax.set_ylabel("Intensidade (a.u.)")
-            elif tipo == "4 Pontas":
-                ax.plot(df_existing["current_a"], df_existing["voltage_v"], "o-")
-                ax.set_xlabel("Corrente (A)")
-                ax.set_ylabel("Tensão (V)")
-            elif tipo == "Ângulo de Contato":
-                ax.plot(df_existing["t_seconds"], df_existing["angle_mean_deg"], "o-")
-                ax.set_xlabel("Tempo (s)")
-                ax.set_ylabel("Ângulo médio (°)")
-            elif tipo == "Perfilometria":
-                plot_df = df_downsample_for_plot(df_existing.sort_values("position_um"), "position_um", "height_nm")
-                ax.plot(plot_df["position_um"], plot_df["height_nm"])
-                ax.set_xlabel("Posição (µm)")
-                ax.set_ylabel("Altura (nm)")
-            st.pyplot(fig)
-            with st.expander("Ver tabela (primeiras linhas)"):
-                st.dataframe(df_existing.head(100), use_container_width=True)
-
 # ===================== Aba 3: Otimização =====================
 with tabs[2]:
     st.header("3) Otimização Automática")
@@ -394,7 +313,7 @@ with tabs[2]:
         with col2:
             tipo = st.radio("Experimento", ["Raman", "4 Pontas", "Ângulo de Contato"], horizontal=True, key="opt_tipo")
 
-        # Coleta dados do tipo escolhido para a amostra
+        # Função auxiliar
         def collect_data_for(sample_id: int, tipo: str) -> pd.DataFrame:
             table_map = {
                 "Raman": ("measurements", "raman_spectra", "raman"),
@@ -419,13 +338,11 @@ with tabs[2]:
             return pd.DataFrame(rows) if rows else pd.DataFrame()
 
         df_opt = collect_data_for(int(sample_choice), tipo)
-
         if df_opt.empty:
             st.warning(f"Nenhum dado de {tipo} encontrado.")
         else:
             if tipo == "Raman":
                 st.subheader("Pipeline Raman (`ramanchada2`)")
-                # Parâmetros opcionais do pipeline
                 colp1, colp2, colp3 = st.columns(3)
                 with colp1:
                     do_smooth = st.checkbox("Suavizar", value=True)
@@ -434,73 +351,40 @@ with tabs[2]:
                 with colp3:
                     peak_prom = st.number_input("Prominência mínima (picos)", min_value=0.0, value=0.0, step=0.1)
 
-                # Execução sob demanda (evita travar UI)
                 if st.button("▶️ Processar Raman"):
                     try:
-                        df_spec = load_raman_dataframe(df_opt)  # normaliza colunas
-                        # hash para cache
+                        df_spec = load_raman_dataframe(df_opt)
                         cache_key = f"raman_{hash_df_fast(df_spec)}_{int(do_smooth)}_{int(do_baseline)}_{peak_prom}"
+
                         @st.cache_data(show_spinner=True)
                         def _run_pipeline(_df, _do_smooth, _do_baseline, _prom):
                             processed, peaks, fig = process_raman_pipeline(
-                                _df,
-                                smooth=_do_smooth,
-                                baseline=_do_baseline,
+                                _df, smooth=_do_smooth, baseline=_do_baseline,
                                 peak_prominence=_prom if _prom > 0 else None,
                             )
                             return processed, peaks, fig
+
                         processed, peaks, fig = _run_pipeline(df_spec, do_smooth, do_baseline, peak_prom)
                         st.pyplot(fig)
                         st.subheader("Picos detectados")
                         st.dataframe(peaks, use_container_width=True)
 
-                        # ---- Comparação com outra amostra (opcional)
-                        st.subheader("Comparar com outra amostra (Raman)")
-                        other_sample = st.selectbox("Amostra de referência", df_samples["id"], key="opt_other_sample")
-                        if st.button("Comparar espectros"):
-                            df_ref = collect_data_for(int(other_sample), "Raman")
-                            if df_ref.empty:
-                                st.warning("A amostra de referência não possui Raman.")
-                            else:
-                                try:
-                                    spec_ref = preprocess_spectrum(load_raman_dataframe(df_ref))
-                                    similarity = compare_spectra(processed, spec_ref)
-                                    st.info(f"Similaridade espectral (0–1): **{similarity:.3f}**")
-                                except Exception as e:
-                                    st.error(f"Erro na comparação: {e}")
-                    except Exception as e:
-                        st.error(f"Falha no pipeline Raman: {e}")
+                        # === NOVO BLOCO: Identificação molecular automática ===
+                        if not peaks.empty:
+                            st.subheader("🧠 Identificação Molecular Automática")
+                            try:
+                                id_df = identify_molecular_groups(peaks, tolerance=15.0)
+                                if id_df.empty:
+                                    st.info("Nenhum grupo funcional identificado com base nos picos detectados.")
+                                else:
+                                    st.dataframe(id_df, use_container_width=True)
 
-            elif tipo == "4 Pontas":
-                st.subheader("Ajuste Linear (R ≈ V/I)")
-                try:
-                    df_opt = df_opt.sort_values("current_a")
-                    X = df_opt[["current_a"]].values
-                    y = df_opt["voltage_v"].values
-                    model = LinearRegression().fit(X, y)
-                    fig, ax = plt.subplots()
-                    ax.scatter(df_opt["current_a"], df_opt["voltage_v"], label="Dados")
-                    ax.plot(df_opt["current_a"], model.predict(X), label="Ajuste Linear")
-                    ax.set_xlabel("Corrente (A)")
-                    ax.set_ylabel("Tensão (V)")
-                    ax.legend()
-                    st.pyplot(fig)
-                    st.success(f"Resistência estimada (coeficiente angular): **{model.coef_[0]:.6f} Ω**")
-                except Exception as e:
-                    st.error(f"Erro na otimização 4 Pontas: {e}")
-
-            elif tipo == "Ângulo de Contato":
-                st.subheader("Tendência temporal (polinômio 3º)")
-                try:
-                    df_opt = df_opt.sort_values("t_seconds")
-                    coef = np.polyfit(df_opt["t_seconds"], df_opt["angle_mean_deg"], 3)
-                    poly = np.poly1d(coef)
-                    fig, ax = plt.subplots()
-                    ax.plot(df_opt["t_seconds"], df_opt["angle_mean_deg"], "o", label="Dados")
-                    ax.plot(df_opt["t_seconds"], poly(df_opt["t_seconds"]), label="Ajuste 3º grau")
-                    ax.set_xlabel("Tempo (s)")
-                    ax.set_ylabel("Ângulo médio (°)")
-                    ax.legend()
-                    st.pyplot(fig)
-                except Exception as e:
-                    st.error(f"Erro na otimização de ângulo de contato: {e}")
+                                    fig2, ax2 = plt.subplots(figsize=(6, 3))
+                                    ax2.bar(id_df["Pico (cm⁻¹)"], id_df["Confiança (%)"], color="orange")
+                                    ax2.set_xlabel("Pico Raman (cm⁻¹)")
+                                    ax2.set_ylabel("Confiança (%)")
+                                    ax2.set_title("Probabilidade de grupos funcionais detectados")
+                                    st.pyplot(fig2)
+                                    st.caption("⚙️ As faixas são baseadas em valores médios da literatura Raman.")
+                            except Exception as e:
+                                st.error(f"Erro na identificação molecular: {e
