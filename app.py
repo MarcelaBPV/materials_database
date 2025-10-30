@@ -303,6 +303,7 @@ with tabs[1]:
 # ===================== Aba 3: Otimização =====================
 with tabs[2]:
     st.header("3) Otimização Automática")
+
     df_samples = st.session_state["samples_df"]
     if df_samples.empty:
         st.warning("Cadastre amostras primeiro.")
@@ -313,7 +314,7 @@ with tabs[2]:
         with col2:
             tipo = st.radio("Experimento", ["Raman", "4 Pontas", "Ângulo de Contato"], horizontal=True, key="opt_tipo")
 
-        # Função auxiliar
+        # Função auxiliar para coletar dados do tipo selecionado
         def collect_data_for(sample_id: int, tipo: str) -> pd.DataFrame:
             table_map = {
                 "Raman": ("measurements", "raman_spectra", "raman"),
@@ -337,10 +338,13 @@ with tabs[2]:
                     rows.extend(r.data)
             return pd.DataFrame(rows) if rows else pd.DataFrame()
 
+        # Carrega dados da amostra
         df_opt = collect_data_for(int(sample_choice), tipo)
+
         if df_opt.empty:
             st.warning(f"Nenhum dado de {tipo} encontrado.")
         else:
+            # ---------------- RAMAN ----------------
             if tipo == "Raman":
                 st.subheader("Pipeline Raman (`ramanchada2`)")
                 colp1, colp2, colp3 = st.columns(3)
@@ -359,12 +363,15 @@ with tabs[2]:
                         @st.cache_data(show_spinner=True)
                         def _run_pipeline(_df, _do_smooth, _do_baseline, _prom):
                             processed, peaks, fig = process_raman_pipeline(
-                                _df, smooth=_do_smooth, baseline=_do_baseline,
+                                _df,
+                                smooth=_do_smooth,
+                                baseline=_do_baseline,
                                 peak_prominence=_prom if _prom > 0 else None,
                             )
                             return processed, peaks, fig
 
                         processed, peaks, fig = _run_pipeline(df_spec, do_smooth, do_baseline, peak_prom)
+
                         st.pyplot(fig)
                         st.subheader("Picos detectados")
                         st.dataframe(peaks, use_container_width=True)
@@ -385,6 +392,60 @@ with tabs[2]:
                                     ax2.set_ylabel("Confiança (%)")
                                     ax2.set_title("Probabilidade de grupos funcionais detectados")
                                     st.pyplot(fig2)
-                                    st.caption("⚙️ As faixas são baseadas em valores médios da literatura Raman.")
+                                    st.caption("⚙️ As faixas são baseadas em valores médios da literatura Raman (álcoois, amidas, carbonilas, etc.).")
                             except Exception as e:
-                                st.error(f"Erro na identificação molecular: {e
+                                st.error(f"Erro na identificação molecular: {e}")
+
+                        # ---- Comparação com outra amostra (opcional)
+                        st.subheader("Comparar com outra amostra (Raman)")
+                        other_sample = st.selectbox("Amostra de referência", df_samples["id"], key="opt_other_sample")
+                        if st.button("Comparar espectros"):
+                            df_ref = collect_data_for(int(other_sample), "Raman")
+                            if df_ref.empty:
+                                st.warning("A amostra de referência não possui Raman.")
+                            else:
+                                try:
+                                    spec_ref = preprocess_spectrum(load_raman_dataframe(df_ref))
+                                    similarity = compare_spectra(processed, spec_ref)
+                                    st.info(f"Similaridade espectral (0–1): **{similarity:.3f}**")
+                                except Exception as e:
+                                    st.error(f"Erro na comparação: {e}")
+
+                    except Exception as e:
+                        st.error(f"Falha no pipeline Raman: {e}")
+
+            # ---------------- 4 PONTAS ----------------
+            elif tipo == "4 Pontas":
+                st.subheader("Ajuste Linear (R ≈ V/I)")
+                try:
+                    df_opt = df_opt.sort_values("current_a")
+                    X = df_opt[["current_a"]].values
+                    y = df_opt["voltage_v"].values
+                    model = LinearRegression().fit(X, y)
+                    fig, ax = plt.subplots()
+                    ax.scatter(df_opt["current_a"], df_opt["voltage_v"], label="Dados")
+                    ax.plot(df_opt["current_a"], model.predict(X), label="Ajuste Linear")
+                    ax.set_xlabel("Corrente (A)")
+                    ax.set_ylabel("Tensão (V)")
+                    ax.legend()
+                    st.pyplot(fig)
+                    st.success(f"Resistência estimada (coeficiente angular): **{model.coef_[0]:.6f} Ω**")
+                except Exception as e:
+                    st.error(f"Erro na otimização 4 Pontas: {e}")
+
+            # ---------------- ÂNGULO DE CONTATO ----------------
+            elif tipo == "Ângulo de Contato":
+                st.subheader("Tendência temporal (polinômio 3º grau)")
+                try:
+                    df_opt = df_opt.sort_values("t_seconds")
+                    coef = np.polyfit(df_opt["t_seconds"], df_opt["angle_mean_deg"], 3)
+                    poly = np.poly1d(coef)
+                    fig, ax = plt.subplots()
+                    ax.plot(df_opt["t_seconds"], df_opt["angle_mean_deg"], "o", label="Dados")
+                    ax.plot(df_opt["t_seconds"], poly(df_opt["t_seconds"]), label="Ajuste 3º grau")
+                    ax.set_xlabel("Tempo (s)")
+                    ax.set_ylabel("Ângulo médio (°)")
+                    ax.legend()
+                    st.pyplot(fig)
+                except Exception as e:
+                    st.error(f"Erro na otimização de ângulo de contato: {e}")
