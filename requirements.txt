@@ -12,7 +12,6 @@ postgrest>=0.13.0
 scikit-learn>=1.5.0
 
 # Processamento Raman (MIT)
-ramanchada2>=0.8.0
 git+https://github.com/h2020charisma/ramanchada2.git
 
 # Utilitários
