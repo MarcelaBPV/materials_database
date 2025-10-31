@@ -1,16 +1,24 @@
 # -*- coding: utf-8 -*-
 """
 Processamento Raman (MIT) usando ramanchada2.
-Compatível com o Streamlit Cloud.
+Compatível com versões recentes (>=0.8.0).
 """
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# Imports atualizados conforme estrutura recente do pacote MIT
-from ramanchada2.spectrum import Spectrum
-from ramanchada2.similarity import cosine_similarity
+# Importação compatível com a estrutura atual do ramanchada2
+try:
+    from ramanchada2 import spectrum
+    from ramanchada2.similarity import cosine_similarity
+except ImportError:
+    # Fallback para versões antigas (antes da 0.8)
+    from ramanchada2 import spectrum
+    from ramanchada2.misc.spectrum_similarity import cosine_similarity
+
+Spectrum = spectrum.Spectrum
+
 
 # -------------------------------
 # 1) Carregamento e normalização
