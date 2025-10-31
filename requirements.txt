@@ -17,7 +17,12 @@ wheel>=0.44.0
 build>=1.2.1
 
 # Processamento Raman (MIT)
-git+https://github.com/h2020charisma/ramanchada2.git
+git+https://github.com/h2020charisma/ramanchada2.git#egg=ramanchada2
+setuptools
+wheel
+build
+numpy
+
 
 # Utilitários
 python-dotenv>=1.0.1
