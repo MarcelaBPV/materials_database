@@ -1,28 +1,38 @@
 # -*- coding: utf-8 -*-
 """
-Processamento Raman (MIT) usando ramanchada2.
-Compatível com versões recentes (>=0.8.0).
+Processamento Raman (MIT - ramanchada2)
+Compatível com versões antigas (misc.spectrum_similarity)
+e novas (similarity.cosine_similarity)
 """
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# Importação compatível com a estrutura atual do ramanchada2
+# =====================
+# Compatibilidade MIT
+# =====================
 try:
+    # Novas versões (>= 0.8.0)
     from ramanchada2 import spectrum
     from ramanchada2.similarity import cosine_similarity
 except ImportError:
-    # Fallback para versões antigas (antes da 0.8)
-    from ramanchada2 import spectrum
-    from ramanchada2.misc.spectrum_similarity import cosine_similarity
+    try:
+        # Versões antigas (Streamlit Cloud usa essa)
+        from ramanchada2 import spectrum
+        from ramanchada2.misc.spectrum_similarity import cosine_similarity
+    except ImportError:
+        raise ImportError(
+            "❌ Falha ao importar `ramanchada2`. "
+            "Verifique se o pacote está instalado corretamente."
+        )
 
 Spectrum = spectrum.Spectrum
 
 
-# -------------------------------
+# ======================================================
 # 1) Carregamento e normalização
-# -------------------------------
+# ======================================================
 def load_raman_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
     df = df_raw.copy()
 
@@ -44,9 +54,9 @@ def load_raman_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
     return df[["wavenumber_cm1", "intensity_a"]]
 
 
-# -------------------------------
+# ======================================================
 # 2) Pré-processamento
-# -------------------------------
+# ======================================================
 def preprocess_spectrum(df_spec: pd.DataFrame, smooth=True, baseline=True) -> Spectrum:
     spec = Spectrum(x=df_spec["wavenumber_cm1"].values, y=df_spec["intensity_a"].values)
 
@@ -55,15 +65,14 @@ def preprocess_spectrum(df_spec: pd.DataFrame, smooth=True, baseline=True) -> Sp
     if smooth:
         spec = spec.smooth(smoothness=5)
 
-    # Normaliza entre 0–1
     y = spec.y - np.min(spec.y)
     spec.y = y / np.max(y)
     return spec
 
 
-# -------------------------------
+# ======================================================
 # 3) Pipeline completo
-# -------------------------------
+# ======================================================
 def process_raman_pipeline(df_spec, smooth=True, baseline=True, peak_prominence=None):
     spec = preprocess_spectrum(df_spec, smooth=smooth, baseline=baseline)
 
@@ -77,7 +86,6 @@ def process_raman_pipeline(df_spec, smooth=True, baseline=True, peak_prominence=
         "intensity": peaks.intensities,
     }).sort_values("pos_cm1").reset_index(drop=True)
 
-    # Gera figura
     fig, ax = plt.subplots(figsize=(7, 4))
     ax.plot(spec.x, spec.y, color="steelblue", lw=1.2, label="Espectro Raman")
     if not peaks_df.empty:
@@ -91,9 +99,9 @@ def process_raman_pipeline(df_spec, smooth=True, baseline=True, peak_prominence=
     return spec, peaks_df, fig
 
 
-# -------------------------------
+# ======================================================
 # 4) Similaridade espectral
-# -------------------------------
+# ======================================================
 def compare_spectra(spec_a: Spectrum, spec_b: Spectrum) -> float:
     try:
         return float(cosine_similarity(spec_a, spec_b))
