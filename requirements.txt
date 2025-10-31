@@ -16,10 +16,8 @@ setuptools>=70.0.0
 wheel>=0.44.0
 build>=1.2.1
 
-# --- Baixa o ramanchada2 do GitHub e instala manualmente ---
-# O pip do Streamlit Cloud tem restrição para git+, então usamos o comando abaixo:
-# Ele baixa o .zip do repositório oficial e instala automaticamente.
--e git+https://github.com/h2020charisma/ramanchada2.git@main#egg=ramanchada2
+# --- Biblioteca Raman ---
+git+https://github.com/h2020charisma/ramanchada2.git@main#egg=ramanchada2
 
 # --- Utilitários ---
 python-dotenv>=1.0.1
