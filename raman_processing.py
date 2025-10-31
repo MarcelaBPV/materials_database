@@ -13,8 +13,10 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 # Importa funções da biblioteca oficial do MIT
-from ramanchada2.spectrum import Spectrum
-from ramanchada2.misc.spectrum_similarity import cosine_similarity
+from ramanchada2.misc import spectrum_similarity
+from ramanchada2 import spectrum
+Spectrum = spectrum.Spectrum
+cosine_similarity = spectrum_similarity.cosine_similarity
 
 
 # ===============================
