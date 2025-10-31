@@ -1,43 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-Processamento Raman (MIT - ramanchada2)
-Compatível com todas as versões conhecidas (antigas e novas)
-e com ambientes limitados como o Streamlit Cloud.
+Processamento Raman SEM ramanchada2
+Compatível com Streamlit Cloud
 """
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import streamlit as st
-
-# ======================================================
-# 🔧 Compatibilidade com diferentes versões do ramanchada2
-# ======================================================
-try:
-    # Versões novas (>= 0.8.0)
-    from ramanchada2 import spectrum
-    from ramanchada2.similarity.spectrum_similarity import cosine_similarity
-except Exception:
-    try:
-        # Versões antigas (Cloud ou builds desatualizados)
-        from ramanchada2 import spectrum
-        from ramanchada2.misc.spectrum_similarity import cosine_similarity
-    except Exception as e:
-        st.error("❌ Não foi possível importar o pacote `ramanchada2`.\n"
-                 "Verifique se ele está corretamente instalado no ambiente.")
-        st.info("💡 Dica: adicione esta linha ao seu requirements.txt:\n"
-                "git+https://github.com/h2020charisma/ramanchada2.git@main#egg=ramanchada2")
-        raise e
-
-# Garante compatibilidade universal
-Spectrum = spectrum.Spectrum
+from scipy.signal import savgol_filter, find_peaks
+from sklearn.metrics.pairwise import cosine_similarity
 
 
 # ======================================================
 # 1️⃣ Carregamento e normalização de dados Raman
 # ======================================================
 def load_raman_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
-    """Normaliza nomes de colunas e prepara o DataFrame para processamento."""
     df = df_raw.copy()
 
     colmap = {
@@ -51,85 +28,82 @@ def load_raman_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
     df = df.rename(columns=colmap)
 
     if not {"wavenumber_cm1", "intensity_a"}.issubset(df.columns):
-        raise ValueError("❌ O arquivo precisa conter colunas: 'wavenumber_cm1' e 'intensity_a'.")
+        raise ValueError("Arquivo precisa ter colunas: wavenumber_cm1, intensity_a")
 
     df = df.dropna(subset=["wavenumber_cm1", "intensity_a"])
     df = df.sort_values("wavenumber_cm1").reset_index(drop=True)
-    return df[["wavenumber_cm1", "intensity_a"]]
+    return df
 
 
 # ======================================================
-# 2️⃣ Pré-processamento espectral
+# 2️⃣ Funções auxiliares
 # ======================================================
-def preprocess_spectrum(df_spec: pd.DataFrame, smooth=True, baseline=True) -> Spectrum:
-    """Aplica suavização, remoção de baseline e normalização 0–1."""
-    spec = Spectrum(x=df_spec["wavenumber_cm1"].values, y=df_spec["intensity_a"].values)
+def baseline_correction(y, lam=1e5, p=0.001):
+    """
+    baseline estilo ALS (Asymmetric Least Squares)
+    """
+    from scipy import sparse
+    from scipy.sparse.linalg import spsolve
 
+    L = len(y)
+    D = sparse.diags([1,-2,1],[0,-1,-2], shape=(L,L-2))
+    w = np.ones(L)
+    for _ in range(10):
+        W = sparse.spdiags(w, 0, L, L)
+        Z = W + lam * D.dot(D.T)
+        z = spsolve(Z, w * y)
+        w = p * (y > z) + (1-p) * (y < z)
+    return y - z
+
+
+# ======================================================
+# 3️⃣ Pipeline completo
+# ======================================================
+def process_raman_pipeline(df, smooth=True, baseline=True):
+    x = df["wavenumber_cm1"].values
+    y = df["intensity_a"].values.astype(float)
+
+    # baseline
     if baseline:
-        spec = spec.baseline_subtract()
+        y = baseline_correction(y)
+
+    # smooth
     if smooth:
-        spec = spec.smooth(smoothness=5)
+        y = savgol_filter(y, window_length=15, polyorder=3)
 
-    y = spec.y - np.min(spec.y)
-    spec.y = y / np.max(y)
-    return spec
+    # normalize
+    y = (y - np.min(y)) / (np.max(y) - np.min(y))
 
-
-# ======================================================
-# 3️⃣ Pipeline completo de processamento
-# ======================================================
-def process_raman_pipeline(df_spec, smooth=True, baseline=True, peak_prominence=None):
-    """
-    Executa o pipeline completo:
-    - Pré-processa o espectro
-    - Detecta picos
-    - Gera gráfico e DataFrame de picos
-    """
-    spec = preprocess_spectrum(df_spec, smooth=smooth, baseline=baseline)
-
-    if peak_prominence is not None and peak_prominence > 0:
-        peaks = spec.find_peaks(prominence=peak_prominence)
-    else:
-        peaks = spec.find_peaks()
-
+    # peaks
+    peaks, props = find_peaks(y, prominence=0.05)
     peaks_df = pd.DataFrame({
-        "pos_cm1": peaks.positions,
-        "intensity": peaks.intensities,
-    }).sort_values("pos_cm1").reset_index(drop=True)
+        "pos_cm1": x[peaks],
+        "intensity": y[peaks],
+        "prominence": props["prominences"]
+    })
 
-    # Gráfico Raman
-    fig, ax = plt.subplots(figsize=(7, 4))
-    ax.plot(spec.x, spec.y, color="steelblue", lw=1.3, label="Espectro Raman")
-    if not peaks_df.empty:
-        ax.scatter(peaks_df["pos_cm1"], peaks_df["intensity"], color="crimson", s=22, label="Picos detectados")
-
+    # plot
+    fig, ax = plt.subplots(figsize=(7,4))
+    ax.plot(x, y, label="Espectro Processado")
+    ax.scatter(x[peaks], y[peaks], color="red")
+    ax.set_title("Processamento Raman (SEM ramanchada2)")
     ax.set_xlabel("Número de onda (cm⁻¹)")
-    ax.set_ylabel("Intensidade (u.a.)")
-    ax.legend()
-    ax.set_title("Processamento Raman (ramanchada2 MIT)")
-    fig.tight_layout()
+    ax.set_ylabel("Intensidade (normalizada)")
+    ax.grid(True)
 
-    return spec, peaks_df, fig
+    return (x, y), peaks_df, fig
 
 
 # ======================================================
 # 4️⃣ Similaridade espectral
 # ======================================================
-def compare_spectra(spec_a: Spectrum, spec_b: Spectrum) -> float:
-    """
-    Calcula a similaridade espectral entre dois espectros Raman.
-    Retorna valor entre 0 (diferente) e 1 (idêntico).
-    """
-    try:
-        return float(cosine_similarity(spec_a, spec_b))
-    except Exception:
-        # Caso a versão do pacote não tenha a função direta
-        x_common = np.linspace(
-            max(spec_a.x.min(), spec_b.x.min()),
-            min(spec_a.x.max(), spec_b.x.max()),
-            1000,
-        )
-        y_a = np.interp(x_common, spec_a.x, spec_a.y)
-        y_b = np.interp(x_common, spec_b.x, spec_b.y)
-        sim = np.dot(y_a, y_b) / (np.linalg.norm(y_a) * np.linalg.norm(y_b))
-        return float(sim)
+def compare_spectra(spec1, spec2):
+    x1, y1 = spec1
+    x2, y2 = spec2
+    
+    x_common = np.linspace(max(x1.min(), x2.min()), min(x1.max(), x2.max()), 1000)
+    y1_interp = np.interp(x_common, x1, y1)
+    y2_interp = np.interp(x_common, x2, y2)
+    
+    cos = cosine_similarity(y1_interp.reshape(1, -1), y2_interp.reshape(1, -1))[0][0]
+    return float(cos)
