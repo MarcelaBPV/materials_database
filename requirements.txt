@@ -11,22 +11,15 @@ postgrest>=0.13.0
 # Machine Learning e modelagem
 scikit-learn>=1.5.0
 
-# Dependências de build necessárias para pacotes GitHub
+# Dependências de build para instalação via GitHub
 setuptools>=70.0.0
 wheel>=0.44.0
 build>=1.2.1
 
-# Processamento Raman (MIT)
+# Processamento Raman (MIT - CHARISMA)
 git+https://github.com/h2020charisma/ramanchada2.git#egg=ramanchada2
-setuptools
-wheel
-build
-numpy
-
 
 # Utilitários
 python-dotenv>=1.0.1
-
-# Compatibilidade geral
 typing-extensions>=4.12.2
 requests>=2.32.3
