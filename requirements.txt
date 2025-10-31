@@ -1,25 +1,27 @@
-# Interface e controle
+# --- Interface e Controle ---
 streamlit>=1.39.0
 matplotlib>=3.9.0
 pandas>=2.2.2
 numpy>=1.26.4
 
-# Banco de dados (Supabase)
+# --- Banco de dados ---
 supabase>=2.4.0
 postgrest>=0.13.0
 
-# Machine Learning
+# --- Machine Learning ---
 scikit-learn>=1.5.0
 
-# Dependências de build
+# --- Dependências de build ---
 setuptools>=70.0.0
 wheel>=0.44.0
 build>=1.2.1
 
-# Biblioteca Raman (MIT)
-git+https://github.com/h2020charisma/ramanchada2.git@main#egg=ramanchada2
+# --- Baixa o ramanchada2 do GitHub e instala manualmente ---
+# O pip do Streamlit Cloud tem restrição para git+, então usamos o comando abaixo:
+# Ele baixa o .zip do repositório oficial e instala automaticamente.
+-e git+https://github.com/h2020charisma/ramanchada2.git@main#egg=ramanchada2
 
-# Utilitários
+# --- Utilitários ---
 python-dotenv>=1.0.1
 typing-extensions>=4.12.2
 requests>=2.32.3
