@@ -1,174 +1,147 @@
-# -*- coding: utf-8 -*-
-"""
-Plataforma de Caracterização de Materiais — Versão final estável
-Autor: Marcela Veiga
-"""
-
-import os
-import hashlib
+import streamlit as st
 import pandas as pd
 import numpy as np
+from supabase import create_client
 import matplotlib.pyplot as plt
-import streamlit as st
-from supabase import create_client, Client
-from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from scipy.signal import savgol_filter
 
-# módulos internos
-from raman_processing import process_raman_pipeline, load_raman_dataframe
-from molecular_identification import identify_molecular_groups
+# ---------------------- CONFIG ----------------------
+st.set_page_config(page_title="Plataforma Materiais", layout="wide")
 
-# ---------------- CONFIG ----------------
-st.set_page_config(page_title="📊 Caracterização de Materiais", layout="wide")
-st.title("📊 Plataforma Inteligente para Caracterização de Materiais")
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# ----------- SUPABASE ----------
-def _get_secret(k, default=""):
-    try: 
-        return st.secrets[k]
-    except: 
-        return os.getenv(k, default)
+# ---------------------- FUNÇÕES DB ------------------
+def insert_samples(df):
+    records = df.to_dict(orient="records")
+    supabase.table("samples").insert(records).execute()
 
-SUPABASE_URL = _get_secret("SUPABASE_URL")
-SUPABASE_KEY = _get_secret("SUPABASE_KEY")
+def insert_raman(df, measurement_id):
+    df['measurement_id'] = measurement_id
+    records = df.to_dict(orient="records")
+    supabase.table("raman_spectra").insert(records).execute()
 
-@st.cache_resource
-def get_client(url, key):
-    if url and key:
-        return create_client(url, key)
-    return None
+def insert_four_points(df, measurement_id):
+    df['measurement_id'] = measurement_id
+    supabase.table("four_point_probe_points").insert(df.to_dict("records")).execute()
 
-supabase = get_client(SUPABASE_URL, SUPABASE_KEY)
+def insert_contact_angle(df, measurement_id):
+    df['measurement_id'] = measurement_id
+    supabase.table("contact_angle_points").insert(df.to_dict("records")).execute()
 
-# ----------- FUNÇÕES AUXILIARES ----------
-def smart_read(uploaded):
-    return pd.read_csv(uploaded, sep=None, engine="python", comment="#")
+def get_samples():
+    return supabase.table("samples").select("*").order("id").execute().data
 
-def coluna(df, alternativas):
-    for c in alternativas:
-        if c in df.columns:
-            return c
-    return None
+def get_raman(measurement_id):
+    return supabase.table("raman_spectra").select("*").eq("measurement_id", measurement_id).execute().data
 
-# ----------- TABS ----------
-tabs = st.tabs(["🧾 Amostras", "🧪 Ensaios", "🤖 IA Raman"])
+# ---------------------- PREPROCESSAMENTO RAMAN ------------------
+def preprocess_raman(wavenumber, intensity):
+    baseline = savgol_filter(intensity, 51, 3)  # estilo MIT
+    corrected = intensity - baseline
+    normalized = corrected / np.max(np.abs(corrected))
+    return normalized
 
-# =========================================================
-# 1️⃣ AMOSTRAS
-# =========================================================
-with tabs[0]:
-    st.header("Cadastro & Importação de Amostras")
+# ---------------------- INTERFACE ---------------------
+tab1, tab2, tab3 = st.tabs(["1 Amostras", "2 Ensaios", "3 Otimização (IA)"])
 
-    nome = st.text_input("Nome da amostra")
-    desc = st.text_area("Descrição")
+# =============== ABA 1: AMOSTRAS =====================
+with tab1:
+    st.header("1 Gestão de Amostras")
 
-    if st.button("Salvar Amostra"):
-        if supabase:
-            supabase.table("samples").insert({"sample_name": nome, "description": desc}).execute()
-            st.success("✅ Amostra salva no banco!")
-        else:
-            st.warning("Sem Supabase configurado — modo local.")
+    samples = get_samples()
+    df_samples = pd.DataFrame(samples)
+    st.subheader("Amostras no banco")
+    st.dataframe(df_samples)
 
-    up = st.file_uploader("📥 Importar CSV de amostras", type="csv")
-    if up:
-        df = pd.read_csv(up)
-        st.dataframe(df.head())
-        if st.button("Enviar para banco"):
-            supabase.table("samples").insert(df.to_dict("records")).execute()
-            st.success("✅ Amostras enviadas")
+    st.subheader("Upload de arquivo para cadastro (CSV)")
+    file = st.file_uploader("Selecione CSV com 'sample_name' e 'description'")
 
-# =========================================================
-# 2️⃣ ENSAIOS
-# =========================================================
-with tabs[1]:
-    st.header("Envio e Processamento de Ensaios")
+    if file:
+        df_upload = pd.read_csv(file)
+        st.write(df_upload)
 
-    tipo = st.radio("Tipo", ["Raman","4 Pontas","Ângulo de Contato","Tensiometria"], horizontal=True)
+        if st.button("Enviar para Supabase"):
+            insert_samples(df_upload)
+            st.success("✅ Amostras enviadas!")
+            st.experimental_rerun()
 
-    uploaded = st.file_uploader(f"📤 Upload para {tipo}", type=["csv","txt","tsv"])
-    if not uploaded: st.stop()
+# =============== ABA 2: ENSAIOS =====================
+with tab2:
+    st.header("2 Ensaios e Gráficos")
 
-    df = smart_read(uploaded)
-    st.dataframe(df.head(), use_container_width=True)
+    samples = get_samples()
+    df_samples = pd.DataFrame(samples)
+    sample_dict = {r['sample_name']: r['id'] for r in samples}
+    sample_choice = st.selectbox("Selecione Amostra", list(sample_dict.keys()))
 
-    # ---------------- RAMAN ----------------
-    if tipo == "Raman":
-        df.columns = ["wavenumber_cm1","intensity_a"]
-        fig, ax = plt.subplots()
-        ax.plot(df.iloc[:,0], df.iloc[:,1])
-        ax.set_xlabel("cm⁻¹")
-        ax.set_ylabel("Intensidade (u.a.)")
-        st.pyplot(fig)
+    ensaio_tipo = st.selectbox("Tipo de ensaio", ["raman", "tensiometria", "4_pontas"])
 
-    # ---------------- 4 PONTAS ----------------
-    if tipo == "Resistividade":
-        c = coluna(df, ["corrente","current","I","current_a"])
-        v = coluna(df, ["tensao","voltage","V","voltage_v"])
+    upload = st.file_uploader("Upload CSV do ensaio")
 
-        if not c or not v:
-            st.error("⚠️ Arquivo deve conter colunas de corrente e tensão.")
-            st.stop()
+    if upload:
+        df_ens = pd.read_csv(upload)
+        st.write(df_ens)
 
-        X = df[[c]].values
-        y = df[v].values
-        model = LinearRegression().fit(X, y)
+        if st.button("Salvar Ensaio no Supabase"):
+            meas = supabase.table("measurements").insert({
+                "sample_id": sample_dict[sample_choice],
+                "type": ensaio_tipo
+            }).execute().data[0]["id"]
 
-        fig, ax = plt.subplots()
-        ax.scatter(X,y)
-        ax.plot(X, model.predict(X))
-        ax.set_title("Ajuste linear — 4 Pontas")
-        st.pyplot(fig)
+            if ensaio_tipo == "raman":
+                insert_raman(df_ens.rename(columns={"wavenumber": "wavenumber_cm1", "intensity": "intensity_a"}), meas)
+            elif ensaio_tipo == "4_pontas":
+                insert_four_points(df_ens, meas)
+            else:
+                insert_contact_angle(df_ens, meas)
 
-        st.success(f"Resistência: **{model.coef_[0]:.6f} Ω**")
+            st.success("✅ Dados enviados")
 
-    # ---------------- Tensiometria ----------------
-    if tipo == "Tensiometria":
-        t = coluna(df, ["tempo","time","t","Time","t_seconds"])
-        a = coluna(df, ["angulo","angle","Mean","theta","angle_mean_deg"])
+        # ----------- PLOT RAMAN -----------
+        if ensaio_tipo == "raman":
+            st.subheader("📈 Raman — processamento estilo MIT")
+            wn = df_ens.iloc[:,0].values
+            inten = df_ens.iloc[:,1].values
+            norm = preprocess_raman(wn, inten)
 
-        coef = np.polyfit(df[t], df[a], 3)
-        poly = np.poly1d(coef)
+            fig = plt.figure()
+            plt.plot(wn, norm)
+            plt.title("Raman Normalizado")
+            plt.gca().invert_xaxis()
+            st.pyplot(fig)
 
-        fig, ax = plt.subplots()
-        ax.scatter(df[t], df[a])
-        ax.plot(df[t], poly(df[t]))
-        ax.set_title("Evolução do ângulo de contato")
-        st.pyplot(fig)
+# =============== ABA 3: AI OTIMIZAÇÃO ================
+with tab3:
+    st.header("3 Otimização — IA com Random Forest (Raman)")
 
-    # ---------------- TENSIOMETRIA ----------------
-    if tipo == "Tensiometria":
-        f = coluna(df, ["forca","force","F"])
-        d = coluna(df, ["diametro","diameter","D"])
-        tens = df[f] / df[d]
+    st.info("Modelo usa dados Raman para prever classe do material (demo)")
 
-        df["tensao_surface_mN_m"] = tens * 1000
+    file_model = st.file_uploader("Carregue CSV Raman com 'label' para treinar modelo", key="train")
 
-        st.write("Resultado:")
-        st.dataframe(df[["tensao_surface_mN_m"]].head())
+    if file_model:
+        df = pd.read_csv(file_model)
 
-        st.success("✅ Tensão superficial calculada")
+        X = df.drop(columns=["label"])
+        y = df["label"]
 
-# =========================================================
-# 3️⃣ Otimização
-# =========================================================
-with tabs[2]:
-    st.header("Processamento + IA de Grupos Moleculares (Raman)")
+        X = StandardScaler().fit_transform(X)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
 
-    uploaded = st.file_uploader("📤 Carregar espectro Raman", type=["csv"])
-    if not uploaded: st.stop()
+        model = RandomForestClassifier()
+        model.fit(X_train, y_train)
 
-    df_r = pd.read_csv(uploaded)
-    df_spec = load_raman_dataframe(df_r)
+        acc = model.score(X_test, y_test)
+        st.success(f"✅ Modelo treinado — Acurácia: {acc:.2%}")
 
-    prom = st.slider("Prominência mínima", 0.01, 1.0, 0.05)
+        file_predict = st.file_uploader("Envie CSV Raman para prever", key="predict")
 
-    if st.button("▶️ Processar"):
-        processed, peaks, fig = process_raman_pipeline(df_spec, smooth=True, baseline=True, peak_prominence=prom)
-        st.pyplot(fig)
-
-        st.subheader("Picos encontrados")
-        st.dataframe(peaks)
-
-        if len(peaks):
-            st.subheader("🧠 Identificação Molecular")
-            id_df = identify_molecular_groups(peaks)
-            st.dataframe(id_df)
+        if file_predict:
+            dfp = pd.read_csv(file_predict)
+            Xp = StandardScaler().fit_transform(dfp)
+            pred = model.predict(Xp)
+            st.write(pd.DataFrame({"previsão": pred}))
