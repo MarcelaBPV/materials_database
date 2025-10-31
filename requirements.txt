@@ -8,16 +8,16 @@ numpy>=1.26.4
 supabase>=2.4.0
 postgrest>=0.13.0
 
-# Machine Learning e modelagem
+# Machine Learning
 scikit-learn>=1.5.0
 
-# Dependências de build para instalação via GitHub
+# Dependências de build
 setuptools>=70.0.0
 wheel>=0.44.0
 build>=1.2.1
 
-# Processamento Raman (MIT - CHARISMA)
-git+https://github.com/h2020charisma/ramanchada2.git#egg=ramanchada2
+# Biblioteca Raman (MIT)
+git+https://github.com/h2020charisma/ramanchada2.git@main#egg=ramanchada2
 
 # Utilitários
 python-dotenv>=1.0.1
