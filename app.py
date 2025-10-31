@@ -10,7 +10,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 
 # ---------------------- CONFIG ----------------------
-st.set_page_config(page_title="📊 Plataforma de Materiais", layout="wide")
+st.set_page_config(page_title=" Plataforma Caracterização Materiais", layout="wide")
 
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
@@ -30,7 +30,7 @@ def safe_insert(table, data):
     try:
         supabase.table(table).insert(data).execute()
     except Exception as e:
-        st.warning(f"⚠️ Erro ao inserir em {table}: {e}")
+        st.warning(f" Erro ao inserir em {table}: {e}")
 
 def create_measurement(sample_id, ensaio_type):
     """Cria um registro em measurements e retorna o ID."""
