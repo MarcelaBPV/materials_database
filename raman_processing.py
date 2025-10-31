@@ -9,12 +9,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 # Imports atualizados conforme estrutura recente do pacote MIT
-from ramanchada2 import spectrum
-from ramanchada2.misc import spectrum_similarity
-
-Spectrum = spectrum.Spectrum
-cosine_similarity = spectrum_similarity.cosine_similarity
-
+from ramanchada2.spectrum import Spectrum
+from ramanchada2.similarity import cosine_similarity
 
 # -------------------------------
 # 1) Carregamento e normalização
